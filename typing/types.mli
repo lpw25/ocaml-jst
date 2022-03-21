@@ -71,7 +71,8 @@ and type_desc =
       [Tarrow (Labelled "l", e1, e2, c)] ==> [l:e1  -> e2]
       [Tarrow (Optional "l", e1, e2, c)] ==> [?l:e1 -> e2]
 
-      See [commutable] for the last argument. *)
+      See [commutable] for the last argument. The argument
+      type must be a [Tpoly] node *)
 
   | Ttuple of type_expr list
   (** [Ttuple [t1;...;tn]] ==> [(t1 * ... * tn)] *)
@@ -145,7 +146,6 @@ and alloc_mode_var = {
 and alloc_mode =
   | Amode of alloc_mode_const
   | Amodevar of alloc_mode_var
-
 
 (** [  `X | `Y ]       (row_closed = true)
     [< `X | `Y ]       (row_closed = true)
