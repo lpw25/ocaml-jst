@@ -2913,6 +2913,11 @@ let is_local_returning_function cases =
   in
   loop_cases cases
 
+let is_unboxed_label lbl =
+  match lbl.lbl_repres with
+  | Record_unboxed _ -> true
+  | _ -> false
+
 (* Approximate the type of an expression, for better recursion *)
 
 let rec approx_type env sty =
@@ -3685,7 +3690,6 @@ and type_expect_
       end
   | Pexp_record(lid_sexp_list, opt_sexp) ->
       assert (lid_sexp_list <> []);
-      register_allocation expected_mode;
       let opt_exp =
         match opt_sexp with
           None -> None
@@ -3736,11 +3740,21 @@ and type_expect_
         wrap_disambiguate "This record expression is expected to have"
           (mk_expected ty_record)
           (type_label_a_list loc closed env
-             (fun e k ->
+             (fun ((_, lbl, _) as e) k ->
+                let rmode =
+                  if is_unboxed_label lbl then expected_mode.mode
+                  else rmode
+                in
                 k (type_label_exp true env rmode loc ty_record e))
              expected_type lid_sexp_list)
           (fun x -> x)
       in
+      let allocating =
+        match lbl_exp_list with
+        | [] -> true
+        | (_, first, _) :: _ -> not (is_unboxed_label first)
+      in
+      if allocating then register_allocation expected_mode;
       with_explanation (fun () ->
         unify_exp_types loc env (instance ty_record) (instance ty_expected));
 
@@ -5409,9 +5423,6 @@ and type_application env app_loc expected_mode funct funct_mode sargs =
 and type_construct env (expected_mode : expected_mode) loc lid sarg
       ty_expected_explained attrs =
   let { ty = ty_expected; explanation } = ty_expected_explained in
-  if sarg <> None then
-    register_allocation expected_mode;
-  let argument_mode = mode_subcomponent expected_mode in
   let expected_type =
     try
       let (p0, p,_) = extract_concrete_variant env ty_expected in
@@ -5479,6 +5490,13 @@ and type_construct env (expected_mode : expected_mode) loc lid sarg
       | _ ->
         raise (Error(loc, env, Inlined_record_expected))
       end
+  in
+  let allocating = sargs <> [] && constr.cstr_inlined = None in
+  if allocating then
+    register_allocation expected_mode;
+  let argument_mode =
+    if allocating then mode_subcomponent expected_mode
+    else expected_mode
   in
   let args =
     List.map2
