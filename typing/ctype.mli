@@ -215,6 +215,7 @@ val generic_instance: type_expr -> type_expr
         (* Same as instance, but new nodes at generic_level *)
 val instance_list: type_expr list -> type_expr list
         (* Take an instance of a list of type schemes *)
+val instance_scheme: type_expr -> effect_context -> type_expr * effect_context
 val existential_name: constructor_description -> type_expr -> string
 val instance_constructor:
         ?in_pattern:Env.t ref * int ->
@@ -233,11 +234,14 @@ val instance_class:
         type_expr list -> class_type -> type_expr list * class_type
 val instance_poly:
         ?keep_names:bool ->
-        bool -> type_expr list -> type_expr -> type_expr list * type_expr
+        bool -> type_expr list -> type_expr -> effect_context ->
+        type_expr list * type_expr * effect_context
         (* Take an instance of a type scheme containing free univars *)
-val polyfy: Env.t -> type_expr -> type_expr list -> type_expr * bool
+val polyfy: Env.t -> type_expr -> type_expr list -> effect_context ->
+            type_expr * bool
 val instance_label:
-        bool -> label_description -> type_expr list * type_expr * type_expr
+        bool -> label_description ->
+        type_expr list * type_expr * type_expr * effect_context
         (* Same, for a label *)
 val prim_mode :
         alloc_mode option -> (Primitive.mode * Primitive.native_repr)
@@ -279,6 +283,7 @@ val unify_var: Env.t -> type_expr -> type_expr -> unit
         (* Same as [unify], but allow free univars when first type
            is a variable. *)
 val unify_alloc_mode: alloc_mode -> alloc_mode -> unit
+val join_effect_context: Env.t -> effect_context -> effect_context -> effect_context
 val filter_arrow: Env.t -> type_expr -> arg_label -> bool ->
                   alloc_mode * type_expr * alloc_mode * type_expr
         (* A special case of unification (with l:'a -> 'b). *)
@@ -294,7 +299,9 @@ val deep_occur: type_expr -> type_expr -> bool
 val filter_self_method:
         Env.t -> string -> private_flag -> (Ident.t * type_expr) Meths.t ref ->
         type_expr -> Ident.t * type_expr
-val moregeneral: Env.t -> bool -> type_expr -> type_expr -> bool
+val moregeneral:
+        Env.t -> bool -> type_expr -> effect_context ->
+        type_expr -> effect_context -> bool
         (* Check if the first type scheme is more general than the second. *)
 
 val rigidify: type_expr -> type_expr list

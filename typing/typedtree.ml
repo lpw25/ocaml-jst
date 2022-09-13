@@ -25,6 +25,18 @@ type partial = Partial | Total
 type attribute = Parsetree.attribute
 type attributes = attribute list
 
+type delayed_effect_context =
+  | Tuple of effect_context list * effect_context
+  | Single of effect_context
+
+type expr_effect_context =
+  { current : effect_context;
+    delayed : delayed_effect_context; }
+
+let effect_context_of_delayed_effect_context = function
+  | Tuple(_, eff) -> eff
+  | Single eff -> eff
+
 type value = Value_pattern
 type computation = Computation_pattern
 
@@ -41,6 +53,7 @@ and 'a pattern_data =
     pat_extra : (pat_extra * Location.t * attribute list) list;
     pat_type: type_expr;
     pat_mode: value_mode;
+    pat_effs: effect_context;
     pat_env: Env.t;
     pat_attributes: attribute list;
    }
@@ -87,6 +100,7 @@ and expression =
     exp_extra: (exp_extra * Location.t * attribute list) list;
     exp_type: type_expr;
     exp_mode: value_mode;
+    exp_effs : expr_effect_context;
     exp_env: Env.t;
     exp_attributes: attribute list;
    }
@@ -681,6 +695,7 @@ let as_computation_pattern (p : pattern) : computation general_pattern =
     pat_extra = [];
     pat_type = p.pat_type;
     pat_mode = p.pat_mode;
+    pat_effs = p.pat_effs;
     pat_env = p.pat_env;
     pat_attributes = [];
   }
@@ -832,16 +847,16 @@ let rev_let_bound_idents_full bindings =
   List.iter (fun vb -> iter_bound_idents add vb.vb_pat) bindings;
   !idents_full
 
-let let_bound_idents_with_modes bindings =
+let let_bound_idents_with_modes_and_effs bindings =
   let modes = Ident.Tbl.create 3 in
   let rec loop : type k . k general_pattern -> _ =
     fun pat ->
       match pat.pat_desc with
       | Tpat_var (id, { loc }) ->
-          Ident.Tbl.add modes id (loc, pat.pat_mode)
+          Ident.Tbl.add modes id (loc, pat.pat_mode, pat.pat_effs)
       | Tpat_alias(p, id, { loc }) ->
           loop p;
-          Ident.Tbl.add modes id (loc, pat.pat_mode)
+          Ident.Tbl.add modes id (loc, pat.pat_mode, pat.pat_effs)
       | d -> shallow_iter_pattern_desc { f = loop } d
   in
   List.iter (fun vb -> loop vb.vb_pat) bindings;

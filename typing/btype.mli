@@ -96,12 +96,17 @@ val proxy: type_expr -> type_expr
         (* Return the proxy representative of the type: either itself
            or a row variable *)
 
+(* Effect contexts *)
+
+val empty_effect_context : effect_context
+val is_empty_effect_context : effect_context -> bool
+
 (* Poly types. *)
 
 (* These three functions can only be called on [Tpoly] nodes. *)
 val is_mono : type_expr -> bool
 val get_mono : type_expr -> type_expr
-val get_poly : type_expr -> type_expr * type_expr list
+val get_poly : type_expr -> type_expr * type_expr list * effect_context
 
 (**** Utilities for private abbreviations with fixed rows ****)
 val row_of_type: type_expr -> type_expr
@@ -119,6 +124,9 @@ val iter_row: (type_expr -> unit) -> row_desc -> unit
 val fold_row: ('a -> type_expr -> 'a) -> 'a -> row_desc -> 'a
 val iter_abbrev: (type_expr -> unit) -> abbrev_memo -> unit
         (* Iteration on types in an abbreviation list *)
+val iter_effect_context: (type_expr -> unit) -> effect_context -> unit
+val fold_effect_context: ('a -> type_expr -> 'a) -> 'a -> effect_context -> 'a
+
 
 type type_iterators =
   { it_signature: type_iterators -> signature -> unit;
@@ -150,6 +158,7 @@ val copy_row:
     (type_expr -> type_expr) ->
     bool -> row_desc -> bool -> type_expr -> row_desc
 val copy_kind: field_kind -> field_kind
+val copy_effect_context : (type_expr -> type_expr) -> effect_context -> effect_context
 
 module For_copy : sig
 

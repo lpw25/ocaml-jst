@@ -521,10 +521,11 @@ and raw_type_desc ppf = function
   | Tlink t -> fprintf ppf "@[<1>Tlink@,%a@]" raw_type t
   | Tsubst t -> fprintf ppf "@[<1>Tsubst@,%a@]" raw_type t
   | Tunivar name -> fprintf ppf "Tunivar %a" print_name name
-  | Tpoly (t, tl) ->
-      fprintf ppf "@[<hov1>Tpoly(@,%a,@,%a)@]"
+  | Tpoly (t, tl, eff) ->
+      fprintf ppf "@[<hov1>Tpoly(@,%a,@,%a,@,%a)@]"
         raw_type t
         raw_type_list tl
+        raw_effect_context eff
   | Tvariant row ->
       fprintf ppf
         "@[<hov1>{@[%s@,%a;@]@ @[%s@,%a;@]@ %s%B;@ %s%a;@ @[<1>%s%t@]}@]"
@@ -543,6 +544,12 @@ and raw_type_desc ppf = function
   | Tpackage (p, _, tl) ->
       fprintf ppf "@[<hov1>Tpackage(@,%a@,%a)@]" path p
         raw_type_list tl
+
+and raw_effect_context ppf eff =
+  pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf ";@ ")
+    (fun ppf (s, ty) -> fprintf ppf "@[%s, %a@]" s raw_type ty)
+    ppf eff.effects
+
 and raw_row_fixed ppf = function
 | None -> fprintf ppf "None"
 | Some Types.Fixed_private -> fprintf ppf "Some Fixed_private"
@@ -918,9 +925,10 @@ let rec mark_loops_rec visited ty =
     | Tnil -> ()
     | Tsubst ty -> mark_loops_rec visited ty
     | Tlink _ -> fatal_error "Printtyp.mark_loops_rec (2)"
-    | Tpoly (ty, tyl) ->
+    | Tpoly (ty, tyl, eff) ->
         List.iter (fun t -> add_alias t) tyl;
-        mark_loops_rec visited ty
+        mark_loops_rec visited ty;
+        List.iter (fun (_, ty) -> mark_loops_rec visited ty) eff.effects
     | Tunivar _ -> add_named_var ty
 
 let mark_loops ty =

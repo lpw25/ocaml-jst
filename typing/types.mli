@@ -122,7 +122,7 @@ and type_desc =
   (** Occurrence of a type variable introduced by a
       forall quantifier / [Tpoly]. *)
 
-  | Tpoly of type_expr * type_expr list
+  | Tpoly of type_expr * type_expr list * effect_context
   (** [Tpoly (ty,tyl)] ==> ['a1... 'an. ty],
       where 'a1 ... 'an are names given to types in tyl
       and occurrences of those types in ty. *)
@@ -146,6 +146,9 @@ and alloc_mode_var = {
 and alloc_mode =
   | Amode of alloc_mode_const
   | Amodevar of alloc_mode_var
+
+and effect_context =
+  { effects : (string * type_expr) list }
 
 (** [  `X | `Y ]       (row_closed = true)
     [< `X | `Y ]       (row_closed = true)
@@ -284,6 +287,7 @@ module Vars  : Map.S with type key = string
 
 type value_description =
   { val_type: type_expr;                (* Type of the value *)
+    val_effs : effect_context;
     val_kind: value_kind;
     val_loc: Location.t;
     val_attributes: Parsetree.attributes;

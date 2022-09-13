@@ -25,10 +25,10 @@ module Value_mode = Btype.Value_mode
 (* Utilities for building patterns   *)
 (*************************************)
 
-let make_pat desc ty mode tenv =
+let make_pat desc ty mode effs tenv =
   {pat_desc = desc; pat_loc = Location.none; pat_extra = [];
-   pat_type = ty ; pat_mode = mode; pat_env = tenv;
-   pat_attributes = [];
+   pat_type = ty ; pat_mode = mode; pat_effs = effs;
+   pat_env = tenv; pat_attributes = [];
   }
 
 let omega = Patterns.omega
@@ -38,7 +38,7 @@ let omega_list = Patterns.omega_list
 let extra_pat =
   make_pat
     (Tpat_var (Ident.create_local "+", mknoloc "+"))
-    Ctype.none Value_mode.max_mode Env.empty
+    Ctype.none Value_mode.max_mode Btype.empty_effect_context Env.empty
 
 
 (*******************)

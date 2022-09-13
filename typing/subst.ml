@@ -251,12 +251,22 @@ let rec typexp copy_scope s ty =
       end;
     ty'
 
+let effect_context copy_scope s eff =
+  copy_effect_context (typexp copy_scope s) eff
+
 (*
    Always make a copy of the type. If this is not done, type levels
    might not be correct.
 *)
 let type_expr s ty =
   For_copy.with_scope (fun copy_scope -> typexp copy_scope s ty)
+
+let type_scheme s sch eff =
+  For_copy.with_scope
+    (fun copy_scope ->
+      let sch = typexp copy_scope s sch in
+      let eff = effect_context copy_scope s eff in
+      sch, eff)
 
 let label_declaration copy_scope s l =
   {
@@ -377,6 +387,7 @@ let class_type s cty =
 
 let value_description' copy_scope s descr =
   { val_type = typexp copy_scope s descr.val_type;
+    val_effs = effect_context copy_scope s descr.val_effs;
     val_kind = descr.val_kind;
     val_loc = loc s descr.val_loc;
     val_attributes = attrs s descr.val_attributes;

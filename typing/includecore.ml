@@ -95,7 +95,8 @@ let value_descriptions ~loc env name
            Option.iter Btype.Alloc_mode.make_global_exn mode2;
            ty2
          in
-         if not (Ctype.moregeneral env true ty1_global ty2_global) then
+         if not (Ctype.moregeneral env true ty1_global vd1.val_effs
+                   ty2_global vd2.val_effs) then
            raise Dont_match;
          let ty1_local, _ = Ctype.instance_prim_mode p1 vd1.val_type in
          let ty2_local =
@@ -103,7 +104,8 @@ let value_descriptions ~loc env name
            Option.iter Btype.Alloc_mode.make_local_exn mode2;
            ty2
          in
-         if not (Ctype.moregeneral env true ty1_local ty2_local) then
+         if not (Ctype.moregeneral env true
+                   ty1_local vd1.val_effs ty2_local vd2.val_effs) then
            raise Dont_match;
          match primitive_descriptions p1 p2 with
          | None -> Tcoerce_none
@@ -111,7 +113,8 @@ let value_descriptions ~loc env name
        end
      | _ ->
         let ty1, mode1 = Ctype.instance_prim_mode p1 vd1.val_type in
-        if not (Ctype.moregeneral env true ty1 vd2.val_type) then
+        if not (Ctype.moregeneral env true ty1 vd1.val_effs
+                  vd2.val_type vd2.val_effs) then
           raise Dont_match;
         let pc =
           {pc_desc = p1; pc_type = vd2.Types.val_type; pc_poly_mode = mode1;
@@ -119,7 +122,8 @@ let value_descriptions ~loc env name
         Tcoerce_primitive pc
      end
   | _ ->
-     if Ctype.moregeneral env true vd1.val_type vd2.val_type then begin
+     if Ctype.moregeneral env true vd1.val_type vd1.val_effs
+          vd2.val_type vd2.val_effs then begin
        match vd2.val_kind with
          | Val_prim _ -> raise Dont_match
          | _ -> Tcoerce_none

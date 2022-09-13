@@ -34,6 +34,17 @@ type attributes = attribute list
 
 (** {1 Core language} *)
 
+type delayed_effect_context =
+  | Tuple of Types.effect_context list * Types.effect_context
+  | Single of Types.effect_context
+
+type expr_effect_context =
+  { current : Types.effect_context;
+    delayed : delayed_effect_context; }
+
+val effect_context_of_delayed_effect_context :
+  delayed_effect_context -> Types.effect_context
+
 type value = Value_pattern
 type computation = Computation_pattern
 
@@ -50,6 +61,7 @@ and 'a pattern_data =
     pat_extra : (pat_extra * Location.t * attributes) list;
     pat_type: Types.type_expr;
     pat_mode: Types.value_mode;
+    pat_effs: Types.effect_context;
     pat_env: Env.t;
     pat_attributes: attributes;
    }
@@ -152,6 +164,7 @@ and expression =
     exp_extra: (exp_extra * Location.t * attributes) list;
     exp_type: Types.type_expr;
     exp_mode: Types.value_mode;
+    exp_effs : expr_effect_context;
     exp_env: Env.t;
     exp_attributes: attributes;
    }
@@ -845,9 +858,10 @@ val exists_pattern: (pattern -> bool) -> pattern -> bool
 val let_bound_idents: value_binding list -> Ident.t list
 val let_bound_idents_full:
     value_binding list -> (Ident.t * string loc * Types.type_expr) list
-val let_bound_idents_with_modes:
+val let_bound_idents_with_modes_and_effs:
   value_binding list
-  -> (Ident.t * (Location.t * Types.value_mode) list) list
+  -> (Ident.t * (Location.t * Types.value_mode * Types.effect_context) list)
+       list
 
 (** Alpha conversion of patterns *)
 val alpha_pat:

@@ -205,8 +205,11 @@ let rec immediate_subtypes : type_expr -> type_expr list = fun ty ->
       immediate_subtypes_object_row [] ty
   | Tlink _ | Tsubst _ -> assert false (* impossible due to Ctype.repr *)
   | Tvar _ | Tunivar _ -> []
-  | Tpoly (pty, _) -> [pty]
+  | Tpoly (pty, _, eff) -> pty :: immediate_subtypes_effect_context eff
   | Tconstr (_path, tys, _) -> tys
+
+and immediate_subtypes_effect_context eff =
+  List.fold_left (fun acc (_, ty) -> ty :: acc) [] eff.effects
 
 and immediate_subtypes_object_row acc ty = match (Ctype.repr ty).desc with
   | Tnil -> acc
@@ -498,7 +501,7 @@ let check_type
        variable cannot be extracted by constraints (this would be
        a scope violation), so they could be ignored if they occur
        under a separating type constructor. *)
-    | (Tpoly(pty,_)       , m      ) ->
+    | (Tpoly(pty,_,_)       , m      ) ->
         check_type hyps pty m
     | (Tunivar(_)         , _      ) -> empty
     (* Type constructor case. *)

@@ -280,7 +280,8 @@ let newobj fields      = newty (Tobject (fields, ref None))
 
 let newconstr path tyl = newty (Tconstr (path, tyl, ref Mnil))
 
-let newmono ty = newty (Tpoly(ty, []))
+let newmono ty = newty (Tpoly(ty, [], empty_effect_context))
+let newmono2 lv ty = newty2 lv (Tpoly(ty, [], empty_effect_context))
 
 let none = newty (Ttuple [])                (* Clearly ill-formed type *)
 
@@ -745,6 +746,10 @@ let closed_class params sign =
 let duplicate_type ty =
   Subst.type_expr Subst.identity ty
 
+(* Same, for type scheme with effects *)
+let duplicate_scheme ty eff =
+  Subst.type_scheme Subst.identity ty eff
+
 (* Same, for class types *)
 let duplicate_class_type ty =
   Subst.class_type Subst.identity ty
@@ -810,7 +815,7 @@ let rec generalize_spine ty =
       set_level ty generic_level;
       generalize_spine ty1;
       generalize_spine ty2;
-  | Tpoly (ty', _) ->
+  | Tpoly (ty', _, _) ->
       set_level ty generic_level;
       generalize_spine ty'
   | Ttuple tyl
@@ -1096,13 +1101,13 @@ let rec inv_type hash pty ty =
     TypeHash.add hash ty inv;
     iter_type_expr (inv_type hash [inv]) ty
 
-let compute_univars ty =
+let compute_univars_list tyl =
   let inverted = TypeHash.create 17 in
-  inv_type inverted [] ty;
+  List.iter (inv_type inverted []) tyl;
   let node_univars = TypeHash.create 17 in
   let rec add_univar univ inv =
     match inv.inv_type.desc with
-      Tpoly (_ty, tl) when List.memq univ (List.map repr tl) -> ()
+      Tpoly (_ty, tl, _) when List.memq univ (List.map repr tl) -> ()
     | _ ->
         try
           let univs = TypeHash.find node_univars inv.inv_type in
@@ -1119,6 +1124,7 @@ let compute_univars ty =
   fun ty ->
     try !(TypeHash.find node_univars ty) with Not_found -> TypeSet.empty
 
+let compute_univars ty = compute_univars_list [ty]
 
 let fully_generic ty =
   let rec aux acc ty =
@@ -1295,6 +1301,13 @@ let instance ?partial sch =
     | Some keep -> Some (compute_univars sch, keep)
   in
   For_copy.with_scope (fun scope -> copy ?partial scope sch)
+
+let instance_scheme sch eff =
+  For_copy.with_scope
+    (fun scope ->
+      let sch = copy scope sch in
+      let eff = copy_effect_context (copy scope) eff in
+      sch, eff)
 
 let generic_instance sch =
   let old = !current_level in
@@ -1497,19 +1510,24 @@ let rec copy_sep cleanup_scope fixed free bound visited ty =
           let fixed' = fixed && (is_Tvar more || is_Tunivar more) in
           let row = copy_row copy_rec fixed' row keep more' in
           Tvariant row
-      | Tpoly (t1, tl) ->
+      | Tpoly (t1, tl, eff) ->
           let tl = List.map repr tl in
           let tl' = List.map (fun t -> newty t.desc) tl in
           let bound = tl @ bound in
           let visited =
             List.map2 (fun ty t -> ty,(t,bound)) tl tl' @ visited in
-          Tpoly (copy_sep cleanup_scope fixed free bound visited t1, tl')
+          let t1 = copy_sep cleanup_scope fixed free bound visited t1 in
+          let eff =
+            copy_effect_context
+              (copy_sep cleanup_scope fixed free bound visited) eff
+          in
+          Tpoly (t1, tl', eff)
       | _ -> copy_type_desc copy_rec ty.desc
       end;
     t
   end
 
-let instance_poly' cleanup_scope ~keep_names fixed univars sch =
+let instance_poly' cleanup_scope ~keep_names fixed univars sch eff =
   let univars = List.map repr univars in
   let copy_var ty =
     match ty.desc with
@@ -1519,27 +1537,34 @@ let instance_poly' cleanup_scope ~keep_names fixed univars sch =
   let vars = List.map copy_var univars in
   let pairs = List.map2 (fun u v -> u, (v, [])) univars vars in
   delayed_copy := [];
-  let ty = copy_sep cleanup_scope fixed (compute_univars sch) [] pairs sch in
+  let eff_tys = List.map snd eff.effects in 
+  let free = compute_univars_list (sch :: eff_tys) in
+  let ty = copy_sep cleanup_scope fixed free [] pairs sch in
+  let effects =
+    List.map
+      (fun (name, ty) -> (name, copy_sep cleanup_scope fixed free [] pairs ty))
+      eff.effects
+  in
   List.iter Lazy.force !delayed_copy;
   delayed_copy := [];
-  vars, ty
+  vars, ty, {effects}
 
-let instance_poly ?(keep_names=false) fixed univars sch =
+let instance_poly ?(keep_names=false) fixed univars sch eff =
   For_copy.with_scope (fun cleanup_scope ->
-    instance_poly' cleanup_scope ~keep_names fixed univars sch
+    instance_poly' cleanup_scope ~keep_names fixed univars sch eff
   )
 
 let instance_label fixed lbl =
   For_copy.with_scope (fun scope ->
     let ty_res = copy scope lbl.lbl_res in
-    let vars, ty_arg =
+    let vars, ty_arg, eff =
       match repr lbl.lbl_arg with
-        {desc = Tpoly (ty, tl)} ->
-          instance_poly' scope ~keep_names:false fixed tl ty
+        {desc = Tpoly (ty, tl, eff)} ->
+          instance_poly' scope ~keep_names:false fixed tl ty eff
       | _ ->
-          [], copy scope lbl.lbl_arg
+          [], copy scope lbl.lbl_arg, empty_effect_context
     in
-    (vars, ty_arg, ty_res)
+    (vars, ty_arg, ty_res, eff)
   )
 
 let prim_mode mvar = function
@@ -2022,9 +2047,10 @@ let occur_univar env ty =
         Tunivar _ ->
           if not (TypeSet.mem ty bound) then
             raise Trace.(Unify [escape (Univ ty)])
-      | Tpoly (ty, tyl) ->
+      | Tpoly (ty, tyl, eff) ->
           let bound = List.fold_right TypeSet.add (List.map repr tyl) bound in
-          occur_rec bound  ty
+          occur_rec bound ty;
+          iter_effect_context (occur_rec bound) eff
       | Tconstr (_, [], _) -> ()
       | Tconstr (p, tl, _) ->
           begin try
@@ -2075,9 +2101,12 @@ let univars_escape env univar_pairs vl ty =
     if TypeSet.mem t !visited then () else begin
       visited := TypeSet.add t !visited;
       match t.desc with
-        Tpoly (t, tl) ->
+      | Tpoly (t, tl, eff) ->
           if List.exists (fun t -> TypeSet.mem (repr t) family) tl then ()
-          else occur t
+          else begin
+            occur t;
+            iter_effect_context occur eff
+          end
       | Tunivar _ ->
           if TypeSet.mem t family then raise Trace.(Unify [escape(Univ t)])
       | Tconstr (_, [], _) -> ()
@@ -2098,7 +2127,7 @@ let univars_escape env univar_pairs vl ty =
   occur ty
 
 (* Wrapper checking that no variable escapes and updating univar_pairs *)
-let enter_poly env univar_pairs t1 tl1 t2 tl2 f =
+let enter_poly env univar_pairs t1 tl1 eff1 t2 tl2 eff2 f =
   let old_univars = !univar_pairs in
   let known_univars =
     List.fold_left (fun s (cl,_) -> add_univars s cl)
@@ -2106,20 +2135,20 @@ let enter_poly env univar_pairs t1 tl1 t2 tl2 f =
   in
   let tl1 = List.map repr tl1 and tl2 = List.map repr tl2 in
   if List.exists (fun t -> TypeSet.mem t known_univars) tl1 then
-     univars_escape env old_univars tl1 (newty(Tpoly(t2,tl2)));
+     univars_escape env old_univars tl1 (newty(Tpoly(t2,tl2,eff2)));
   if List.exists (fun t -> TypeSet.mem t known_univars) tl2 then
-    univars_escape env old_univars tl2 (newty(Tpoly(t1,tl1)));
+    univars_escape env old_univars tl2 (newty(Tpoly(t1,tl1,eff1)));
   let cl1 = List.map (fun t -> t, ref None) tl1
   and cl2 = List.map (fun t -> t, ref None) tl2 in
   univar_pairs := (cl1,cl2) :: (cl2,cl1) :: old_univars;
-  Misc.try_finally (fun () -> f t1 t2)
+  Misc.try_finally (fun () -> f t1 eff1 t2 eff2)
     ~always:(fun () -> univar_pairs := old_univars)
 
 let univar_pairs = ref []
 
 (**** Instantiate a generic type into a poly type ***)
 
-let polyfy env ty vars =
+let polyfy env ty vars eff =
   let subst_univar scope ty =
     let ty = repr ty in
     match ty.desc with
@@ -2136,7 +2165,8 @@ let polyfy env ty vars =
   For_copy.with_scope (fun scope ->
     let vars' = List.filter_map (subst_univar scope) vars in
     let ty = copy scope ty in
-    let ty = newty2 ty.level (Tpoly(repr ty, vars')) in
+    let eff = copy_effect_context (copy scope) eff in
+    let ty = newty2 ty.level (Tpoly(repr ty, vars', eff)) in
     let complete = List.length vars = List.length vars' in
     ty, complete
   )
@@ -2144,7 +2174,7 @@ let polyfy env ty vars =
 (* assumption: [ty] is fully generalized. *)
 let reify_univars env ty =
   let vars = free_variables ty in
-  let ty, _ = polyfy env ty vars in
+  let ty, _ = polyfy env ty vars empty_effect_context in
   ty
 
                               (*****************)
@@ -2371,11 +2401,14 @@ let rec mcomp type_pairs env t1 t2 =
             mcomp_fields type_pairs env t1' t2'
         | (Tnil, Tnil) ->
             ()
-        | (Tpoly (t1, []), Tpoly (t2, [])) ->
-            mcomp type_pairs env t1 t2
-        | (Tpoly (t1, tl1), Tpoly (t2, tl2)) ->
-            enter_poly env univar_pairs t1 tl1 t2 tl2
-              (mcomp type_pairs env)
+        | (Tpoly (t1, [], eff1), Tpoly (t2, [], eff2)) ->
+            mcomp type_pairs env t1 t2;
+            mcomp_effect_context type_pairs env eff1 eff2
+        | (Tpoly (t1, tl1, eff1), Tpoly (t2, tl2, eff2)) ->
+            enter_poly env univar_pairs t1 tl1 eff1 t2 tl2 eff2
+              (fun t1 eff1 t2 eff2 -> 
+                mcomp type_pairs env t1 t2;
+                mcomp_effect_context type_pairs env eff1 eff2)
         | (Tunivar _, Tunivar _) ->
             unify_univar t1' t2' !univar_pairs
         | (_, _) ->
@@ -2386,6 +2419,15 @@ and mcomp_list type_pairs env tl1 tl2 =
   if List.length tl1 <> List.length tl2 then
     raise (Unify []);
   List.iter2 (mcomp type_pairs env) tl1 tl2
+
+and mcomp_effect_context type_pairs env eff1 eff2 =
+  if List.length eff1.effects <> List.length eff2.effects then
+    raise (Unify []);
+  List.iter2
+    (fun (n1, ty1) (n2, ty2) ->
+      if not (String.equal n1 n2) then raise (Unify []);
+      mcomp type_pairs env ty1 ty2)
+    eff1.effects eff2.effects
 
 and mcomp_fields type_pairs env ty1 ty2 =
   if not (concrete_object ty1 && concrete_object ty2) then assert false;
@@ -2892,10 +2934,14 @@ and unify3 env t1 t1' t2 t2' =
           end
       | (Tnil, Tnil) ->
           ()
-      | (Tpoly (t1, []), Tpoly (t2, [])) ->
-          unify env t1 t2
-      | (Tpoly (t1, tl1), Tpoly (t2, tl2)) ->
-          enter_poly !env univar_pairs t1 tl1 t2 tl2 (unify env)
+      | (Tpoly (t1, [], eff1), Tpoly (t2, [], eff2)) ->
+          unify env t1 t2;
+          unify_effect_context env eff1 eff2
+      | (Tpoly (t1, tl1, eff1), Tpoly (t2, tl2, eff2)) ->
+          enter_poly !env univar_pairs t1 tl1 eff1 t2 tl2 eff2
+            (fun t1 eff1 t2 eff2 ->
+              unify env t1 t2;
+              unify_effect_context env eff1 eff2)
       | (Tpackage (p1, n1, tl1), Tpackage (p2, n2, tl2)) ->
           begin try
             unify_package !env (unify_list env)
@@ -2929,6 +2975,15 @@ and unify_list env tl1 tl2 =
   if List.length tl1 <> List.length tl2 then
     raise (Unify []);
   List.iter2 (unify env) tl1 tl2
+
+and unify_effect_context env eff1 eff2 =
+  if List.length eff1.effects <> List.length eff2.effects then
+    raise (Unify []);
+  List.iter2
+    (fun (n1, ty1) (n2, ty2) ->
+      if not (String.equal n1 n2) then raise (Unify []);
+      unify env ty1 ty2)
+    eff1.effects eff2.effects
 
 (* Build a fresh row variable for unification *)
 and make_rowvar level use1 rest1 use2 rest2  =
@@ -3246,7 +3301,20 @@ let unify_pairs env ty1 ty2 pairs =
 let unify env ty1 ty2 =
   unify_pairs (ref env) ty1 ty2 []
 
-
+let join_effect_context env eff1 eff2 =
+  let rec loop env effects1 effects2 =
+    match effects1, effects2 with
+    | (n1, ty1) :: rest1, (n2, ty2) :: rest2 ->
+        if not (String.equal n1 n2) then raise (Unify []);
+        unify env ty1 ty2;
+        let rest = loop env rest1 rest2 in
+        (n1, ty1) :: rest
+    | _ :: _, [] -> effects1
+    | [], _ :: _ -> effects2
+    | [], [] -> []
+  in
+  let effects = loop env eff1.effects eff2.effects in
+  {effects}
 
 (**** Special cases of unification ****)
 
@@ -3279,7 +3347,7 @@ let filter_arrow env t l force_poly =
             else
               newvar2 lv
           in
-          newty2 lv (Tpoly(t1, []))
+          newmono2 lv t1
         end
       in
       let t2 = newvar2 lv in
@@ -3297,7 +3365,9 @@ let filter_arrow env t l force_poly =
 
 let filter_mono ty =
   match (repr ty).desc with
-  | Tpoly(ty, []) -> ty
+  | Tpoly(ty, [], eff) ->
+      if is_empty_effect_context eff then ty
+      else raise (Unify [])
   | _ -> raise (Unify [])
 
 let filter_arrow_mono env t l =
@@ -3510,11 +3580,14 @@ let rec moregen inst_nongen variance type_pairs env t1 t2 =
               moregen_fields inst_nongen variance type_pairs env t1' t2'
           | (Tnil, Tnil) ->
               ()
-          | (Tpoly (t1, []), Tpoly (t2, [])) ->
-              moregen inst_nongen variance type_pairs env t1 t2
-          | (Tpoly (t1, tl1), Tpoly (t2, tl2)) ->
-              enter_poly env univar_pairs t1 tl1 t2 tl2
-                (moregen inst_nongen variance type_pairs env)
+          | (Tpoly (t1, [], eff1), Tpoly (t2, [], eff2)) ->
+              moregen inst_nongen variance type_pairs env t1 t2;
+              moregen_effect_context inst_nongen variance type_pairs env eff1 eff2
+          | (Tpoly (t1, tl1, eff1), Tpoly (t2, tl2, eff2)) ->
+              enter_poly env univar_pairs t1 tl1 eff1 t2 tl2 eff2
+                (fun t1 eff1 t2 eff2 ->
+                  moregen inst_nongen variance type_pairs env t1 t2;
+                  moregen_effect_context inst_nongen variance type_pairs env eff1 eff2)
           | (Tunivar _, Tunivar _) ->
               unify_univar t1' t2' !univar_pairs
           | (_, _) ->
@@ -3526,6 +3599,15 @@ and moregen_list inst_nongen variance type_pairs env tl1 tl2 =
   if List.length tl1 <> List.length tl2 then
     raise (Unify []);
   List.iter2 (moregen inst_nongen variance type_pairs env) tl1 tl2
+
+and moregen_effect_context inst_nongen variance type_pairs env eff1 eff2 =
+  if List.length eff1.effects <> List.length eff2.effects then
+    raise (Unify []);
+  List.iter2
+    (fun (n1, ty1) (n2, ty2) ->
+      if not (String.equal n1 n2) then raise (Unify []);
+      moregen inst_nongen variance type_pairs env ty1 ty2)
+    eff1.effects eff2.effects
 
 and moregen_param_list inst_nongen variance type_pairs env vl tl1 tl2 =
   match vl, tl1, tl2 with
@@ -3638,7 +3720,7 @@ and moregen_row inst_nongen variance type_pairs env row1 row2 =
    Usually, the subject is given by the user, and the pattern
    is unimportant.  So, no need to propagate abbreviations.
 *)
-let moregeneral env inst_nongen pat_sch subj_sch =
+let moregeneral env inst_nongen pat_sch pat_eff subj_sch subj_eff =
   let old_level = !current_level in
   current_level := generic_level - 1;
   (*
@@ -3647,16 +3729,23 @@ let moregeneral env inst_nongen pat_sch subj_sch =
      then copied with [duplicate_type].  That way, its levels won't be
      changed.
   *)
-  let subj = duplicate_type (instance subj_sch) in
+  let subj_sch, subj_eff = instance_scheme subj_sch subj_eff in
+  let subj_sch, subj_eff = duplicate_scheme subj_sch subj_eff in
   current_level := generic_level;
   (* Duplicate generic variables *)
-  let patt = instance pat_sch in
+  let pat_sch, pat_eff = instance_scheme pat_sch pat_eff in
   let res =
     univar_pairs := [];
     let type_pairs = fresh_moregen_pairs () in
-    match moregen inst_nongen Covariant type_pairs env patt subj with
-    | () -> true
+    match moregen inst_nongen Covariant type_pairs env pat_sch subj_sch with
     | exception Unify _ -> false
+    | () ->
+        match
+          moregen_effect_context inst_nongen
+            Covariant type_pairs env pat_eff subj_eff
+        with
+        | exception Unify _ -> false
+        | () -> true
   in
   current_level := old_level;
   res
@@ -3799,11 +3888,14 @@ let rec eqtype rename type_pairs subst env t1 t2 =
               eqtype_fields rename type_pairs subst env t1' t2'
           | (Tnil, Tnil) ->
               ()
-          | (Tpoly (t1, []), Tpoly (t2, [])) ->
-              eqtype rename type_pairs subst env t1 t2
-          | (Tpoly (t1, tl1), Tpoly (t2, tl2)) ->
-              enter_poly env univar_pairs t1 tl1 t2 tl2
-                (eqtype rename type_pairs subst env)
+          | (Tpoly (t1, [], eff1), Tpoly (t2, [], eff2)) ->
+              eqtype rename type_pairs subst env t1 t2;
+              eqtype_effect_context rename type_pairs subst env eff1 eff2
+          | (Tpoly (t1, tl1, eff1), Tpoly (t2, tl2, eff2)) ->
+              enter_poly env univar_pairs t1 tl1 eff1 t2 tl2 eff2
+                (fun t1 eff1 t2 eff2 ->
+                  eqtype rename type_pairs subst env t1 t2;
+                  eqtype_effect_context rename type_pairs subst env eff1 eff2)
           | (Tunivar _, Tunivar _) ->
               unify_univar t1' t2' !univar_pairs
           | (_, _) ->
@@ -3815,6 +3907,15 @@ and eqtype_list rename type_pairs subst env tl1 tl2 =
   if List.length tl1 <> List.length tl2 then
     raise (Unify []);
   List.iter2 (eqtype rename type_pairs subst env) tl1 tl2
+
+and eqtype_effect_context rename type_pairs subst env eff1 eff2 =
+  if List.length eff1.effects <> List.length eff2.effects then
+    raise (Unify []);
+  List.iter2
+    (fun (n1, ty1) (n2, ty2) ->
+      if not (String.equal n1 n2) then raise (Unify []);
+      eqtype rename type_pairs subst env ty1 ty2)
+    eff1.effects eff2.effects
 
 and eqtype_fields rename type_pairs subst env ty1 ty2 =
   let (fields1, rest1) = flatten_fields ty1 in
@@ -4426,9 +4527,22 @@ let rec build_subtype env visited loops posi level t =
       end
   | Tsubst _ | Tlink _ ->
       assert false
-  | Tpoly(t1, tl) ->
-      let (t1', c) = build_subtype env visited loops posi level t1 in
-      if c > Unchanged then (newty (Tpoly(t1', tl)), c)
+  | Tpoly(t1, tl, eff) ->
+      let (t1', c1) = build_subtype env visited loops posi level t1 in
+      let (eff', c2) =
+        let effects =
+          List.map
+            (fun (n, ty) ->
+              let ty, c = build_subtype env visited loops posi level ty in
+              (n, ty), c)
+            eff.effects
+        in
+        let c = collect effects in
+        if c > Unchanged then ({ effects = List.map fst effects }, c)
+        else (eff, Unchanged)
+      in
+      let c = max c1 c2 in
+      if c > Unchanged then (newty (Tpoly(t1', tl, eff')), c)
       else (t, Unchanged)
   | Tunivar _ | Tpackage _ ->
       (t, Unchanged)
@@ -4529,15 +4643,19 @@ let rec subtype_rec env trace t1 t2 cstrs =
         with Exit ->
           (trace, t1, t2, !univar_pairs)::cstrs
         end
-    | (Tpoly (u1, []), Tpoly (u2, [])) ->
-        subtype_rec env trace u1 u2 cstrs
-    | (Tpoly (u1, tl1), Tpoly (u2, [])) ->
-        let _, u1' = instance_poly false tl1 u1 in
-        subtype_rec env trace u1' u2 cstrs
-    | (Tpoly (u1, tl1), Tpoly (u2,tl2)) ->
+    | (Tpoly (u1, [], eff1), Tpoly (u2, [], eff2)) ->
+        let cstrs = subtype_rec env trace u1 u2 cstrs in
+        subtype_effect_context env trace eff1 eff2 cstrs
+    | (Tpoly (u1, tl1, eff1), Tpoly (u2, [], eff2)) ->
+        let _, u1', eff1' = instance_poly false tl1 u1 eff1 in
+        let cstrs = subtype_rec env trace u1' u2 cstrs in
+        subtype_effect_context env trace eff1' eff2 cstrs
+    | (Tpoly (u1, tl1, eff1), Tpoly (u2, tl2, eff2)) ->
         begin try
-          enter_poly env univar_pairs u1 tl1 u2 tl2
-            (fun t1 t2 -> subtype_rec env trace t1 t2 cstrs)
+          enter_poly env univar_pairs u1 tl1 eff1 u2 tl2 eff2
+            (fun t1 eff1 t2 eff2 ->
+              let cstrs = subtype_rec env trace t1 t2 cstrs in
+              subtype_effect_context env trace eff1 eff2 cstrs)
         with Unify _ ->
           (trace, t1, t2, !univar_pairs)::cstrs
         end
@@ -4576,6 +4694,15 @@ and subtype_list env trace tl1 tl2 cstrs =
   List.fold_left2
     (fun cstrs t1 t2 -> subtype_rec env (Trace.diff t1 t2::trace) t1 t2 cstrs)
     cstrs tl1 tl2
+
+and subtype_effect_context env trace eff1 eff2 cstrs =
+  if List.length eff1.effects <> List.length eff2.effects then
+    subtype_error env trace;
+  List.fold_left2
+    (fun cstrs (n1, ty1) (n2, ty2) ->
+      if not (String.equal n1 n2) then subtype_error env trace;
+      subtype_rec env (Trace.diff ty1 ty2::trace) ty1 ty2 cstrs)
+    cstrs eff1.effects eff2.effects
 
 and subtype_fields env trace ty1 ty2 cstrs =
   (* Assume that either rest1 or rest2 is not Tvar *)
