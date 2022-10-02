@@ -95,6 +95,31 @@ let rec split_last = function
       let (lst, last) = split_last tl in
       (hd :: lst, last)
 
+let rec map3 f l1 l2 l3 =
+  match (l1, l2, l3) with
+  | ([], [], []) -> []
+  | (a1::l1, a2::l2, a3::l3) ->
+      let r = f a1 a2 a3 in
+      r :: map3 f l1 l2 l3
+  | (_, _, _) -> invalid_arg "map3"
+
+let rec map4 f l1 l2 l3 l4 =
+  match (l1, l2, l3, l4) with
+  | ([], [], [], []) -> []
+  | (a1::l1, a2::l2, a3::l3, a4::l4) ->
+      let r = f a1 a2 a3 a4 in
+      r :: map4 f l1 l2 l3 l4
+  | (_, _, _, _) -> invalid_arg "map4"
+
+let rec iter3 f l1 l2 l3 =
+  match (l1, l2, l3) with
+  | ([], [], []) -> ()
+  | (a1::l1, a2::l2, a3::l3) ->
+      f a1 a2 a3;
+      iter3 f l1 l2 l3
+  | (_, _, _) -> invalid_arg "iter3"
+
+
 module Stdlib = struct
   module List = struct
     include List

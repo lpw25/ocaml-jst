@@ -731,8 +731,8 @@ and build_as_type_aux env p =
         if keep then p.pat_type else
         let tyl = List.map (build_as_type env) pl in
         let ty_args, ty_res = instance_constructor cstr in
-        List.iter2 (fun (p,ty) -> unify_pat env {p with pat_type = ty})
-          (List.combine pl tyl) ty_args;
+        iter3 (fun p ty ty_arg -> unify_pat env {p with pat_type = ty} ty_arg)
+          pl tyl ty_args;
         ty_res
       in
       ty, mode
@@ -1225,6 +1225,10 @@ let rec find_record_qual = function
 let map_fold_cont f xs k =
   List.fold_right (fun x k ys -> f x (fun y -> k (y :: ys)))
     xs (fun ys -> k (List.rev ys)) []
+
+let map_fold_cont2 f xs ys k =
+  List.fold_right2 (fun x y k zs -> f x y (fun z -> k (z :: zs)))
+    xs ys (fun zs -> k (List.rev zs)) []
 
 let type_label_a_list
       ?labels loc closed env type_lbl_a expected_type lid_a_list k =
@@ -1908,9 +1912,9 @@ and type_pat_aux
       in
       if constr.cstr_inlined <> None then List.iter check_non_escaping sargs;
 
-      map_fold_cont
-        (fun (p,t) -> type_pat Value p t)
-        (List.combine sargs ty_args)
+      map_fold_cont2
+        (fun p t -> type_pat Value p t)
+        sargs ty_args
         (fun args ->
           rvp k {
             pat_desc=Tpat_construct(lid, constr, args);
@@ -3689,13 +3693,12 @@ and type_expect_
           List.init arity (fun _ -> arg_mode)
         end
       in
-      let types_and_modes = List.combine subtypes argument_modes in
       let expl =
-        List.map2
-          (fun body (ty, argument_mode) ->
+        map3
+          (fun body ty argument_mode ->
              type_expect env (mode_nontail argument_mode)
                body (mk_expected ty))
-          sexpl types_and_modes
+          sexpl subtypes argument_modes
       in
       re {
         exp_desc = Texp_tuple expl;
@@ -5653,9 +5656,9 @@ and type_construct env (expected_mode : expected_mode) loc lid sarg
        mode_subcomponent expected_mode
   in
   let args =
-    List.map2
-      (fun e (t,t0) -> type_argument ~recarg env argument_mode e t t0)
-      sargs (List.combine ty_args ty_args0)
+    map3
+      (fun e t t0 -> type_argument ~recarg env argument_mode e t t0)
+      sargs ty_args ty_args0
   in
   if constr.cstr_private = Private then
     begin match constr.cstr_tag with
@@ -6244,14 +6247,13 @@ and type_let
              lower_contravariant env exp.exp_type;
            generalize_and_check_univars env "definition" exp expected_ty vars)
     pat_list exp_list;
-  let l = List.combine pat_list exp_list in
   let l =
-    List.map2
-      (fun ((_,p,_), (e, _)) pvb ->
+    map3
+      (fun (_,p,_) (e, _) pvb ->
         {vb_pat=p; vb_expr=e; vb_attributes=pvb.pvb_attributes;
          vb_loc=pvb.pvb_loc;
         })
-      l spat_sexp_list
+      pat_list exp_list spat_sexp_list
   in
   if is_recursive then
     List.iter

@@ -81,6 +81,12 @@ val list_remove: 'a -> 'a list -> 'a list
 val split_last: 'a list -> 'a list * 'a
         (* Return the last element and the other elements of the given list. *)
 
+(* Additional multiple list iterators *)
+val map3 : ('a -> 'b -> 'c -> 'd) -> 'a list -> 'b list -> 'c list -> 'd list
+val map4 : ('a -> 'b -> 'c -> 'd -> 'e) -> 'a list -> 'b list -> 'c list -> 'd list -> 'e list
+val iter3 : ('a -> 'b -> 'c -> unit) -> 'a list -> 'b list -> 'c list -> unit
+
+
 type ref_and_value = R : 'a ref * 'a -> ref_and_value
 
 val protect_refs : ref_and_value list -> (unit -> 'a) -> 'a
