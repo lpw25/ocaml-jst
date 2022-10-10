@@ -382,6 +382,9 @@ and print_out_type_3 mode ppf =
   | Otyp_attribute (t, attr) ->
       fprintf ppf "@[<1>(%a [@@%s])@]"
         (print_out_type_0 mode) t attr.oattr_name
+  | Otyp_effect_context(t, eff) ->
+      fprintf ppf "@[<1>(%a [%a])@]"
+        (print_out_type_0 mode) t print_out_effect_context eff
 and print_out_type ppf typ =
   print_out_type_0 Oam_global ppf typ
 and print_simple_out_type ppf typ =
@@ -442,6 +445,12 @@ and print_out_label ppf (name, mut_or_gbl, arg) =
     | Ogom_immutable -> ""
   in
   fprintf ppf "@[<2>%s%s :@ %a@];" flag name print_out_type arg
+and print_out_effect_context ppf = function
+  | [] -> ()
+  | [s, ty] -> fprintf ppf "%s:@ %a" s print_out_type ty 
+  | (s, ty) :: eff ->
+      fprintf ppf "%s:@ %a;@ %a"
+        s print_out_type ty print_out_effect_context eff
 
 let out_label = ref print_out_label
 

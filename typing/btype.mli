@@ -399,6 +399,8 @@ module Value_mode : sig
 
   val submode_exn : t -> t -> unit
 
+  val submode_effs : effect_context -> t -> (unit, unit) result
+
   val submode_meet : t -> t list -> (unit, error) result
 
   val join : t list -> t

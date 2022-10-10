@@ -102,3 +102,5 @@ val has_local: Parsetree.attributes -> (bool,unit) result
 val tailcall : Parsetree.attributes -> ([`Tail|`Nontail] option, [`Conflict]) result
 val has_include_functor : Parsetree.attributes -> (bool,unit) result
 
+val get_effect_context :
+  Parsetree.attributes -> ((string * Parsetree.core_type) list, unit) result

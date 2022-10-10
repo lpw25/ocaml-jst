@@ -198,6 +198,7 @@ val correct_levels: type_expr -> type_expr
 val limited_generalize: type_expr -> type_expr -> unit
         (* Only generalize some part of the type
            Make the remaining of the type non-generalizable *)
+val generalize_scheme : type_expr -> effect_context -> unit
 
 val fully_generic: type_expr -> bool
 
@@ -283,7 +284,10 @@ val unify_var: Env.t -> type_expr -> type_expr -> unit
         (* Same as [unify], but allow free univars when first type
            is a variable. *)
 val unify_alloc_mode: alloc_mode -> alloc_mode -> unit
-val join_effect_context: Env.t -> effect_context -> effect_context -> effect_context
+val join_effect_contexts:
+        Env.t -> effect_context -> effect_context -> effect_context
+val unify_effect_context:
+        Env.t -> effect_context -> effect_context -> unit
 val filter_arrow: Env.t -> type_expr -> arg_label -> bool ->
                   alloc_mode * type_expr * alloc_mode * type_expr
         (* A special case of unification (with l:'a -> 'b). *)
@@ -296,6 +300,7 @@ val check_filter_method: Env.t -> string -> private_flag -> type_expr -> unit
         (* A special case of unification (with {m : 'a; 'b}), returning unit. *)
 val occur_in: Env.t -> type_expr -> type_expr -> bool
 val deep_occur: type_expr -> type_expr -> bool
+val deep_occur_scheme: type_expr -> type_expr -> effect_context -> bool
 val filter_self_method:
         Env.t -> string -> private_flag -> (Ident.t * type_expr) Meths.t ref ->
         type_expr -> Ident.t * type_expr

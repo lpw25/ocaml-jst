@@ -48,6 +48,7 @@ type error =
   | Opened_object of Path.t option
   | Not_an_object of type_expr
   | Local_not_enabled
+  | Effects_not_enabled
   | Polymorphic_optional_param
 
 exception Error of Location.t * Env.t * error
@@ -164,6 +165,11 @@ let get_alloc_mode styp =
   | Ok false -> Alloc_mode.Global
   | Error () ->
      raise (Error(styp.ptyp_loc, Env.empty, Local_not_enabled))
+
+let get_effect_context styp =
+  match Builtin_attributes.get_effect_context styp.ptyp_attributes with
+  | Ok effs -> effs
+  | Error () -> raise (Error(styp.ptyp_loc, Env.empty, Effects_not_enabled))
 
 let rec extract_params styp =
   let final styp =
@@ -532,11 +538,11 @@ and transl_type_aux env policy mode styp =
       let new_univars = List.map (fun name -> name, newvar ~name ()) vars in
       let old_univars = !univars in
       univars := new_univars @ !univars;
-      let cty = transl_type env policy mode st in
+      let cty, eff = transl_type_and_effect_context env policy mode st in
       let ty = cty.ctyp_type in
       univars := old_univars;
       end_def();
-      generalize ty;
+      generalize_scheme ty eff;
       let ty_list =
         List.fold_left
           (fun tyl (name, ty1) ->
@@ -551,7 +557,7 @@ and transl_type_aux env policy mode styp =
             end else tyl)
           [] new_univars
       in
-      let ty' = Btype.newgenty (Tpoly(ty, List.rev ty_list)) in
+      let ty' = Btype.newgenty (Tpoly(ty, List.rev ty_list, eff)) in
       unify_var env (newvar()) ty';
       ctyp (Ttyp_poly (vars, cty)) ty'
   | Ptyp_package (p, l) ->
@@ -578,6 +584,18 @@ and transl_type_aux env policy mode styp =
 
 and transl_poly_type env policy mode t =
   transl_type env policy mode (Ast_helper.Typ.force_poly t)
+
+and transl_type_and_effect_context env policy mode styp =
+  let eff = get_effect_context styp in
+  let ty = transl_type env policy mode styp in
+  let effects =
+    List.map
+      (fun (s, styp) ->
+        let cty = transl_type env policy mode styp in
+        let ty = cty.ctyp_type in
+        (s, ty)) eff
+  in
+  ty, {effects}
 
 and transl_fields env policy o fields =
   let hfields = Hashtbl.create 17 in
@@ -667,6 +685,12 @@ let make_fixed_univars ty =
   make_fixed_univars ty;
   Btype.unmark_type ty
 
+let make_fixed_univars_scheme ty eff =
+  make_fixed_univars ty;
+  Btype.iter_effect_context make_fixed_univars eff;
+  Btype.unmark_type ty;
+  Btype.iter_effect_context Btype.unmark_type eff
+
 let create_package_mty = create_package_mty false
 
 let globalize_used_variables env fixed =
@@ -700,10 +724,22 @@ let transl_simple_type env fixed mode styp =
   make_fixed_univars typ.ctyp_type;
   typ
 
+let transl_simple_type_scheme env fixed mode styp =
+  univars := []; used_variables := TyVarMap.empty;
+  let typ, eff =
+    transl_type_and_effect_context env
+      (if fixed then Fixed else Extensible) mode styp
+  in
+  globalize_used_variables env fixed ();
+  make_fixed_univars_scheme typ.ctyp_type eff;
+  typ, eff
+
 let transl_simple_type_univars env styp =
   univars := []; used_variables := TyVarMap.empty; pre_univars := [];
   begin_def ();
-  let typ = transl_type env Univars Alloc_mode.Global styp in
+  let typ, eff =
+    transl_type_and_effect_context env Univars Alloc_mode.Global styp
+  in
   (* Only keep already global variables in used_variables *)
   let new_variables = !used_variables in
   used_variables := TyVarMap.empty;
@@ -714,7 +750,7 @@ let transl_simple_type_univars env styp =
     new_variables;
   globalize_used_variables env false ();
   end_def ();
-  generalize typ.ctyp_type;
+  generalize_scheme typ.ctyp_type eff;
   let univs =
     List.fold_left
       (fun acc v ->
@@ -725,9 +761,9 @@ let transl_simple_type_univars env styp =
         | _ -> acc)
       [] !pre_univars
   in
-  make_fixed_univars typ.ctyp_type;
-    { typ with ctyp_type =
-        instance (Btype.newgenty (Tpoly (typ.ctyp_type, univs))) }
+  make_fixed_univars_scheme typ.ctyp_type eff;
+  { typ with ctyp_type =
+      instance (Btype.newgenty (Tpoly (typ.ctyp_type, univs, eff))) }
 
 let transl_simple_type_delayed env mode styp =
   univars := []; used_variables := TyVarMap.empty;
@@ -746,10 +782,10 @@ let transl_simple_type_delayed env mode styp =
 let transl_type_scheme env styp =
   reset_type_variables();
   begin_def();
-  let typ = transl_simple_type env false Alloc_mode.Global styp in
+  let typ, eff = transl_simple_type_scheme env false Alloc_mode.Global styp in
   end_def();
-  generalize typ.ctyp_type;
-  typ
+  generalize_scheme typ.ctyp_type eff;
+  typ, eff
 
 
 (* Error report *)
@@ -855,6 +891,9 @@ let report_error env ppf = function
   | Local_not_enabled ->
       fprintf ppf "@[The local extension is disabled@ \
                      To enable it, pass the '-extension local' flag@]"
+  | Effects_not_enabled ->
+      fprintf ppf "@[The effects extension is disabled@ \
+                     To enable it, pass the '-extension effects' flag@]"
   | Polymorphic_optional_param ->
       fprintf ppf "@[Optional parameters cannot be polymorphic@]"
 

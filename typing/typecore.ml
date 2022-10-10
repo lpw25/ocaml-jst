@@ -144,6 +144,7 @@ type error =
   | Bad_tail_annotation of [`Conflict|`Not_a_tailcall]
   | Optional_poly_param
   | Effect_type_clash of Ctype.Unification_trace.t * bool
+  | Effect_mode_clash of effect_context
 
 
 exception Error of Location.t * Env.t * error
@@ -439,26 +440,114 @@ let constant_or_raise env loc cst =
   | Ok c -> c
   | Error err -> raise (Error (loc, env, err))
 
+(* Expression effect contexts *)
+
+let no_effect =
+  { delayed = Single empty_effect_context;
+    current = empty_effect_context; }
+
+let delayed_eff eff =
+  { delayed = Single eff;
+    current = empty_effect_context; }
+
+let current_eff eff =
+  { delayed = Single empty_effect_context;
+    current = eff; }
+
+let delay_eff loc env { delayed; current } =
+  let delayed = effect_context_of_delayed_effect_context delayed in
+  match Ctype.join_effect_contexts env delayed current with
+  | eff -> delayed_eff eff
+  | exception Unify trace ->
+      raise (Error(loc, env, Effect_type_clash(trace, false)))
+
+let expedite_eff loc env { delayed; current } =
+  let delayed = effect_context_of_delayed_effect_context delayed in
+  match Ctype.join_effect_contexts env delayed current with
+  | eff -> current_eff eff
+  | exception Unify trace ->
+      raise (Error(loc, env, Effect_type_clash(trace, true)))
+
+let join_effs loc env eff1 eff2 =
+  match Ctype.join_effect_contexts env eff1.current eff2.current with
+  | exception Unify trace ->
+      raise (Error(loc, env, Effect_type_clash(trace, true)))
+  | current ->
+      match eff1.delayed, eff2.delayed with
+      | Tuple(effs1, eff1), Tuple(effs2, eff2)
+            when List.length effs1 = List.length effs2 ->
+          let eff =
+            match Ctype.join_effect_contexts env eff1 eff2 with
+            | exception Unify trace ->
+                raise (Error(loc, env, Effect_type_clash(trace, false)))
+            | eff -> eff
+          in
+          let effs =
+            List.map2
+              (fun eff1 eff2 -> Ctype.join_effect_contexts env eff1 eff2)
+              effs1 effs2
+          in
+          let delayed = Tuple(effs, eff) in
+          { current; delayed }
+      | (Tuple(_, eff1) | Single eff1), (Tuple(_, eff2) | Single eff2) ->
+          match Ctype.join_effect_contexts env eff1 eff2 with
+          | exception Unify trace ->
+              raise (Error(loc, env, Effect_type_clash(trace, false)))
+          | delayed ->
+              let delayed = Single delayed in
+              { current; delayed }
+
+let tuple_effs env exps =
+  let current, delayed, delayed_list =
+    List.fold_left
+      (fun (current_acc, delayed_acc, delayed_list_acc) exp ->
+        let eff = exp.exp_effs in
+        match Ctype.join_effect_contexts env current_acc eff.current with
+        | exception Unify trace ->
+            raise (Error(exp.exp_loc, env, Effect_type_clash(trace, true)))
+        | current_acc ->
+            let delayed =
+              effect_context_of_delayed_effect_context eff.delayed
+            in
+            match Ctype.join_effect_contexts env delayed_acc delayed with
+            | exception Unify trace ->
+                raise (Error(exp.exp_loc, env, Effect_type_clash(trace, false)))
+            | delayed_acc ->
+                let delayed_list_acc = delayed :: delayed_list_acc in
+                (current_acc, delayed_acc, delayed_list_acc))
+      (empty_effect_context, empty_effect_context, []) exps
+  in
+  let delayed = Tuple(delayed_list, delayed) in
+  { current; delayed }
+
+let submode_effs loc env eff mode =
+  let delayed = effect_context_of_delayed_effect_context eff.delayed in
+  match Btype.Value_mode.submode_effs delayed mode.mode with
+  | Ok () -> ()
+  | Error () ->
+      raise (Error(loc, env, Effect_mode_clash delayed))
+
 (* Specific version of type_option, using newty rather than newgenty *)
 
 let type_option ty =
   newty (Tconstr(Predef.path_option,[ty], ref Mnil))
 
-let mkexp exp_desc exp_type exp_mode exp_loc exp_env =
-  { exp_desc; exp_type; exp_mode;
+let mkexp exp_desc exp_type exp_mode exp_effs exp_loc exp_env =
+  { exp_desc; exp_type; exp_mode; exp_effs;
     exp_loc; exp_env; exp_extra = []; exp_attributes = [] }
 
 let option_none env ty mode loc =
   let lid = Longident.Lident "None" in
   let cnone = Env.find_ident_constructor Predef.ident_none env in
-  mkexp (Texp_construct(mknoloc lid, cnone, [])) ty mode loc env
+  mkexp (Texp_construct(mknoloc lid, cnone, [])) ty mode no_effect loc env
 
 let option_some env texp mode =
   register_allocation_value_mode mode;
   let lid = Longident.Lident "Some" in
   let csome = Env.find_ident_constructor Predef.ident_some env in
   mkexp ( Texp_construct(mknoloc lid , csome, [texp]) )
-    (type_option texp.exp_type) mode texp.exp_loc texp.exp_env
+    (type_option texp.exp_type) mode texp.exp_effs
+    texp.exp_loc texp.exp_env
 
 let extract_option_type env ty =
   match expand_head env ty with {desc = Tconstr(path, [ty], _)}
@@ -761,7 +850,7 @@ and build_as_type_aux env p =
       let ty = newvar () in
       let ppl = List.map (fun (_, l, p) -> l.lbl_pos, p) lpl in
       let do_label lbl =
-        let _, ty_arg, ty_res = instance_label false lbl in
+        let _, ty_arg, ty_res, eff = instance_label false lbl in
         unify_pat env {p with pat_type = ty} ty_res;
         let refinable =
           lbl.lbl_mut = Immutable && List.mem_assoc lbl.lbl_pos ppl &&
@@ -770,7 +859,7 @@ and build_as_type_aux env p =
           let arg = List.assoc lbl.lbl_pos ppl in
           unify_pat env {arg with pat_type = build_as_type env arg} ty_arg
         end else begin
-          let _, ty_arg', ty_res' = instance_label false lbl in
+          let _, ty_arg', ty_res', eff' = instance_label false lbl in
           unify !env ty_arg ty_arg';
           unify_pat env p ty_res'
         end in
@@ -3352,72 +3441,6 @@ let rec name_pattern default = function
 let name_cases default lst =
   name_pattern default (List.map (fun c -> c.c_lhs) lst)
 
-(* Expression effect contexts *)
-
-let no_effect =
-  { delayed = Single empty_effect_context;
-    current = empty_effect_context; }
-
-let delayed eff =
-  { delayed = Single eff;
-    current = empty_effect_context; }
-
-let current eff =
-  { delayed = empty_effect_context;
-    current = eff; }
-
-let delay loc env { delayed; current } =
-  match Ctype.join_effect_contexts env delayed current with
-  | eff -> delayed eff
-  | exception Unify trace ->
-      raise (Error(loc, env, Effect_type_clash(trace, false)))
-
-let expedite loc env { delayed; current }
-  match Ctype.join_effect_contexts env delayed current with
-  | eff -> current eff
-  | exception Unify trace ->
-      raise (Error(loc, env, Effect_type_clash(trace, true)))
-
-let join_effs loc env eff1 eff2 =
-  match Ctype.join_effect_contexts eff1.current eff2.current with
-  | exception Unify trace ->
-      raise (Error(loc, env, Effect_type_clash(trace, true)))
-  | current ->
-      match eff1.delayed, eff2.delayed with
-      | Tuple(effs1, _), Tuple(effs2, _) when List.length effs1 = List.length effs2 ->
-      | (Tuple(effs1, _) | Single eff1), Tuple(_, _)          
-      | Tuple(_, eff1), Single eff2
-      | Tuple(_, eff1), Single eff2
-      | Single eff1, Single eff2 -> 
-          match Ctype.join_effect_contexts eff1 eff2 with
-          | exception Unify trace ->
-              raise (Error(loc, env, Effect_type_clash(trace, false)))
-          | delayed -> { current; delayed }      
-
-let tuple_effs env exps =
-  let current, delayed, delayed_list =
-    List.fold_left
-      (fun (current_acc, delayed_acc, delayed_list_acc) exp ->
-        let eff = exp.exp_eff in
-        match Ctype.join_effect_contexts env current_acc eff.current with
-        | exception Unify trace ->
-            raise (Error(exp.exp_loc, env, Effect_type_clash(trace, true)))
-        | current_acc ->
-            let delayed = effect_context_of_delayed_effect eff.delayed in
-            match Ctype.join_effect_contexts env delayed_acc delayed with
-            | exception Unify trace ->
-                raise (Error(exp.exp_loc, env, Effect_type_clash(trace, false)))
-            | delayed_acc ->
-                let delayed_list_acc = delayed :: delayed_list_acc in
-                (current_acc, delayed_acc, delayed_list_acc))
-      (empty_effect_context, empty_effect_context, []) exps
-  in
-  let delayed = Tuple(delayed, delayed_list) in
-  { current; delayed }
-
-let submode_eff env exp mode =
-  ...
-
 (* Typing of expressions *)
 
 let unify_exp env exp expected_ty =
@@ -4026,9 +4049,11 @@ and type_expect_
       let eff =
         List.fold_left
           (fun eff (_, lbl, exp) ->
-            match lbl.lbl_global with
-            | Unrestricted -> join_effs exp.exp_loc env eff exp.exp_eff
-            | Nonlocal | Global ->
+            if lbl.lbl_global = Global then
+              submode_effs exp.exp_loc env exp.exp_eff Value_mode.global;
+            join_effs exp.exp_loc env eff exp.exp_eff)
+          eff lbl_exp_list
+      in
       re {
         exp_desc = Texp_record {
             fields; representation;
@@ -4037,6 +4062,7 @@ and type_expect_
         exp_loc = loc; exp_extra = [];
         exp_type = instance ty_expected;
         exp_mode = expected_mode.mode;
+        exp_eff = eff;
         exp_attributes = sexp.pexp_attributes;
         exp_env = env }
   | Pexp_field(srecord, lid) ->
@@ -7167,6 +7193,11 @@ let report_error ~loc env = function
              else
                fprintf ppf "but an expression was expected with effect"))
         ()
+  | Effect_mode_clash eff  ->
+      Location.errorf ~loc
+        "@[This expresion has exposed effects@ %a@ \
+           which escape the current region@]"
+        Printtyp.effect eff        
 
 let report_error ~loc env err =
   Printtyp.wrap_printing_env ~error:true env

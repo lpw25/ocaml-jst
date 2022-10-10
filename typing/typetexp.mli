@@ -32,7 +32,8 @@ val transl_simple_type_delayed
            the type, an instance of the corresponding type_expr, and a
            function that binds the type variable. *)
 val transl_type_scheme:
-        Env.t -> Parsetree.core_type -> Typedtree.core_type
+        Env.t -> Parsetree.core_type ->
+        Typedtree.core_type * Types.effect_context
 val reset_type_variables: unit -> unit
 val type_variable: Location.t -> string -> type_expr
 val transl_type_param:
@@ -67,6 +68,7 @@ type error =
   | Opened_object of Path.t option
   | Not_an_object of type_expr
   | Local_not_enabled
+  | Effects_not_enabled
   | Polymorphic_optional_param
 
 exception Error of Location.t * Env.t * error

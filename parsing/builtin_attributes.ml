@@ -445,3 +445,22 @@ let has_include_functor attr =
   else
     Ok false
 
+let effect_of_expression pexp =
+  match pexp.pexp_desc with
+  | Pexp_extension({txt=name}, PTyp typ) -> Some (name, typ)
+  | _ -> None
+
+let effect_context_of_payload = function
+  | PStr[{pstr_desc=Pstr_eval({pexp_desc=Pexp_tuple pexps},_)}] ->
+      List.filter_map effect_of_expression pexps
+  | _ -> []
+
+let get_effect_context attr =
+  match List.find_opt (check ["extension.effects"]) attr with
+  | None -> Ok []
+  | Some attr ->
+      if not (Clflags.Extension.is_enabled Effects) then
+        Error ()
+      else
+        Ok (effect_context_of_payload attr.attr_payload)
+

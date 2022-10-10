@@ -1266,6 +1266,14 @@ module Value_mode = struct
     | Ok () -> ()
     | Error _ -> invalid_arg "submode_exn"
 
+  let submode_effs eff t =
+    match eff.effects with
+    | [] -> Ok ()
+    | _ :: _ ->
+        match submode local t with
+        | Ok () as ok -> ok
+        | Error _ -> Error ()
+
   let rec submode_meet t = function
     | [] -> Ok ()
     | t' :: rest ->

@@ -83,7 +83,8 @@ type out_type =
   | Otyp_poly of string list * out_type
   | Otyp_module of out_ident * string list * out_type list
   | Otyp_attribute of out_type * out_attribute
-
+  | Otyp_effect_context of out_type * (string * out_type) list
+   
 and out_variant =
   | Ovar_fields of (string * bool * out_type list) list
   | Ovar_typ of out_type

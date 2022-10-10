@@ -951,6 +951,10 @@ let reset_and_mark_loops ty =
 let reset_and_mark_loops_list tyl =
   reset_except_context (); List.iter mark_loops tyl
 
+let reset_and_mark_effect_context eff =
+  reset_except_context ();
+  List.iter (fun (_, ty) -> mark_loops ty) eff.effects
+
 (* Disabled in classic mode when printing an unification error *)
 let print_labels = ref true
 
@@ -1050,20 +1054,20 @@ let rec tree_of_typexp sch ty =
         tree_of_typexp sch ty
     | Tlink _ ->
         fatal_error "Printtyp.tree_of_typexp"
-    | Tpoly (ty, []) ->
-        tree_of_typexp sch ty
-    | Tpoly (ty, tyl) ->
+    | Tpoly (ty, [], eff) ->
+        tree_of_effect_context sch ty eff
+    | Tpoly (ty, tyl, eff) ->
         (*let print_names () =
           List.iter (fun (_, name) -> prerr_string (name ^ " ")) !names;
           prerr_string "; " in *)
         let tyl = List.map repr tyl in
-        if tyl = [] then tree_of_typexp sch ty else begin
+        if tyl = [] then tree_of_effect_context sch ty eff else begin
           let old_delayed = !delayed in
           (* Make the names delayed, so that the real type is
              printed once when used as proxy *)
           List.iter add_delayed tyl;
           let tl = List.map (name_of_type new_name) tyl in
-          let tr = Otyp_poly (tl, tree_of_typexp sch ty) in
+          let tr = Otyp_poly (tl, tree_of_effect_context sch ty eff) in
           (* Forget names when we leave scope *)
           remove_names tyl;
           delayed := old_delayed; tr
@@ -1080,6 +1084,15 @@ let rec tree_of_typexp sch ty =
     check_name_of_type px;
     Otyp_alias (pr_typ (), name_of_type new_name px) end
   else pr_typ ()
+
+and tree_of_effect_context sch ty eff =
+  let ty = tree_of_typexp sch ty in
+  if eff.effects = [] then
+    ty
+  else begin
+    let eff = List.map (fun (s, ty) -> (s, tree_of_typexp sch ty)) eff.effects in
+    Otyp_effect_context(ty, eff)
+  end
 
 and tree_of_row_field sch (l, f) =
   match row_field_repr f with
@@ -1160,6 +1173,15 @@ let type_path ppf p =
   let p = if (s = Id) then p' else p in
   let t = tree_of_path Type p in
   !Oprint.out_ident ppf t
+
+let effect_context ppf eff =
+  reset_and_mark_effect_context eff;
+  let effect ppf (s, ty) =
+    fprintf ppf "@[%s: @%a@]" s (typexp false) ty
+  in
+  fprintf ppf "[@[%a@]]"
+    (pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf ";@ ") effect)
+    eff.effects
 
 (* Maxence *)
 let type_scheme_max ?(b_reset_names=true) ppf ty =
@@ -1457,16 +1479,16 @@ let value_description id ppf decl =
 
 let method_type (_, kind, ty) =
   match field_kind_repr kind, repr ty with
-    Fpresent, {desc=Tpoly(ty, tyl)} -> (ty, tyl)
-  | _       , ty                    -> (ty, [])
+    Fpresent, {desc=Tpoly(ty, tyl, eff)} -> (ty, tyl, eff)
+  | _       , ty                    -> (ty, [], empty_effect_context)
 
 let tree_of_metho sch concrete csil (lab, kind, ty) =
   if lab <> dummy_method then begin
     let kind = field_kind_repr kind in
     let priv = kind <> Fpresent in
     let virt = not (Concr.mem lab concrete) in
-    let (ty, tyl) = method_type (lab, kind, ty) in
-    let tty = tree_of_typexp sch ty in
+    let (ty, tyl, eff) = method_type (lab, kind, ty) in
+    let tty = tree_of_effect_context sch ty eff in
     remove_names tyl;
     Ocsg_method (lab, priv, virt, tty) :: csil
   end
@@ -1489,7 +1511,12 @@ let rec prepare_class_type params = function
       let (fields, _) =
         Ctype.flatten_fields (Ctype.object_fields sign.csig_self)
       in
-      List.iter (fun met -> mark_loops (fst (method_type met))) fields;
+      List.iter
+        (fun met ->
+          let ty, _, eff = method_type met in
+          mark_loops ty;
+          List.iter (fun (_, ty) -> mark_loops ty) eff.effects)
+        fields;
       Vars.iter (fun _ (_, _, ty) -> mark_loops ty) sign.csig_vars
   | Cty_arrow (_, ty, cty) ->
       mark_loops ty;
@@ -1997,7 +2024,7 @@ let print_tags =
   Format.pp_print_list ~pp_sep:comma print_tag
 
 let is_unit_arg env ty =
-  let ty, vars = get_poly ty in
+  let ty, vars, _ = get_poly ty in
   if vars <> [] then false
   else begin
     match (Ctype.expand_head env ty).desc with

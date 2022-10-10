@@ -782,6 +782,11 @@ let generalize ty =
   simple_abbrevs := Mnil;
   generalize ty
 
+let generalize_scheme ty eff =
+  simple_abbrevs := Mnil;
+  generalize ty;
+  iter_effect_context generalize eff
+
 (* Generalize the structure and lower the variables *)
 
 let rec generalize_structure var_level ty =
@@ -2200,20 +2205,37 @@ let expand_trace env trace =
 
 (**** Unification ****)
 
-(* Return whether [t0] occurs in [ty]. Objects are also traversed. *)
-let deep_occur t0 ty =
-  let rec occur_rec ty =
+let deep_occur_rec t0 ty =
+  let rec loop ty =
     let ty = repr ty in
     if ty.level >= t0.level then begin
       if ty == t0 then raise Occur;
       ty.level <- pivot_level - ty.level;
-      iter_type_expr occur_rec ty
+      iter_type_expr loop ty
     end
   in
+  loop ty
+
+(* Return whether [t0] occurs in [ty]. Objects are also traversed. *)
+let deep_occur t0 ty =
   try
-    occur_rec ty; unmark_type ty; false
+    deep_occur_rec t0 ty; unmark_type ty; false
   with Occur ->
     unmark_type ty; true
+
+let deep_occur_scheme t0 ty eff =
+  match
+    deep_occur_rec t0 ty;
+    iter_effect_context (deep_occur_rec t0) eff;
+  with
+  | () ->
+      unmark_type ty;
+      iter_effect_context unmark_type eff;
+      false
+  | exception Occur ->
+      unmark_type ty;
+      iter_effect_context unmark_type eff;
+      true
 
 (*
    1. When unifying two non-abbreviated types, one type is made a link
@@ -3301,7 +3323,7 @@ let unify_pairs env ty1 ty2 pairs =
 let unify env ty1 ty2 =
   unify_pairs (ref env) ty1 ty2 []
 
-let join_effect_context env eff1 eff2 =
+let join_effect_contexts env eff1 eff2 =
   let rec loop env effects1 effects2 =
     match effects1, effects2 with
     | (n1, ty1) :: rest1, (n2, ty2) :: rest2 ->
@@ -3315,6 +3337,18 @@ let join_effect_context env eff1 eff2 =
   in
   let effects = loop env eff1.effects eff2.effects in
   {effects}
+
+let unify_effect_context env eff1 eff2 =
+  univar_pairs := [];
+  let snap = Btype.snapshot () in
+  let env = ref env in
+  try
+    unify_effect_context env eff1 eff2
+  with
+    Unify trace ->
+      undo_compress snap;
+      raise (Unify (expand_trace !env trace))
+
 
 (**** Special cases of unification ****)
 
