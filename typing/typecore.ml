@@ -527,6 +527,9 @@ let submode_effs loc env eff mode =
   | Error () ->
       raise (Error(loc, env, Effect_mode_clash delayed))
 
+let global_eff eff =
+  { eff with delayed = Single empty_effect_context }
+
 (* Specific version of type_option, using newty rather than newgenty *)
 
 let type_option ty =
@@ -861,6 +864,7 @@ and build_as_type_aux env p =
         end else begin
           let _, ty_arg', ty_res', eff' = instance_label false lbl in
           unify !env ty_arg ty_arg';
+          unify_effect_context_option !env eff eff';
           unify_pat env p ty_res'
         end in
       Array.iter do_label lbl.lbl_all;
@@ -899,7 +903,7 @@ and build_as_type_aux env p =
   | Tpat_any | Tpat_var _
   | Tpat_array _ | Tpat_lazy _ -> p.pat_type, p.pat_mode
 
-let build_or_pat env loc mode lid =
+let build_or_pat env loc mode eff lid =
   let path, decl = Env.lookup_type ~loc:lid.loc lid.txt env in
   let tyl = List.map (fun _ -> newvar()) decl.type_params in
   let row0 =
@@ -917,8 +921,8 @@ let build_or_pat env loc mode lid =
             (l, Reither(true,[], true, ref None)) :: fields
         | Rpresent (Some ty) ->
             (l, Some {pat_desc=Tpat_any; pat_loc=Location.none; pat_env=env;
-                      pat_type=ty; pat_mode=mode; pat_extra=[];
-                      pat_attributes=[]})
+                      pat_type=ty; pat_mode=mode; pat_effs = eff;
+                      pat_extra=[]; pat_attributes=[]})
             :: pats,
             (l, Reither(false, [ty], true, ref None)) :: fields
         | _ -> pats, fields)
@@ -935,7 +939,7 @@ let build_or_pat env loc mode lid =
       (fun (l,p) ->
         {pat_desc=Tpat_variant(l,p,row'); pat_loc=gloc;
          pat_env=env; pat_type=ty; pat_mode=mode;
-         pat_extra=[]; pat_attributes=[]})
+         pat_effs=eff; pat_extra=[]; pat_attributes=[]})
       pats
   in
   match pats with
@@ -949,7 +953,7 @@ let build_or_pat env loc mode lid =
           (fun pat pat0 ->
             {pat_desc=Tpat_or(pat0,pat,Some row0); pat_extra=[];
              pat_loc=gloc; pat_env=env; pat_type=ty; pat_mode=mode;
-             pat_attributes=[]})
+             pat_effs=eff; pat_attributes=[]})
           pat pats in
       (path, rp { r with pat_loc = loc },ty)
 
@@ -972,7 +976,7 @@ let type_for_loop_index ~loc ~env ~param ty =
   | Ppat_var {txt} ->
       Env.enter_value txt
         {val_type = instance ty;
-          val_eff = empty_effect_context;
+          val_effs = empty_effect_context;
           val_attributes = [];
           val_kind = Val_reg;
           val_loc = loc;
@@ -1719,13 +1723,13 @@ let as_comp_pattern
    does not match any value.  *)
 let rec type_pat
   : type k r . k pattern_category -> no_existentials:_ -> mode:_ ->
-      alloc_mode:_ -> env:_ -> _ -> _ -> (k general_pattern -> r) -> r
-  = fun category ~no_existentials ~mode ~alloc_mode
+      alloc_mode:_ -> eff:_ -> env:_ -> _ -> _ -> (k general_pattern -> r) -> r
+  = fun category ~no_existentials ~mode ~alloc_mode ~eff
         ~env sp expected_ty k ->
   Builtin_attributes.warning_scope sp.ppat_attributes
     (fun () ->
        type_pat_aux category ~no_existentials ~mode
-         ~alloc_mode ~env sp expected_ty k
+         ~alloc_mode ~eff ~env sp expected_ty k
     )
 
 and type_pat_aux
@@ -1766,6 +1770,7 @@ and type_pat_aux
         pat_loc = loc; pat_extra=[];
         pat_type = instance expected_ty;
         pat_mode = alloc_mode.mode;
+        pat_effs = eff;
         pat_attributes = sp.ppat_attributes;
         pat_env = !env }
       in
@@ -1793,20 +1798,21 @@ and type_pat_aux
          end
       end
   | Ppat_var name ->
-      let eff = effect_context_of_delayed_effect_context eff in
-      let ty, scheme = instance_scheme expected_ty eff in
+      let eff' = effect_context_of_delayed_effect_context eff in
+      let ty, scheme = instance_scheme expected_ty eff' in
       let alloc_mode = alloc_mode in
       let id = (* PR#7330 *)
         if name.txt = "*extension*" then
           Ident.create_local name.txt
         else
-          enter_variable loc name alloc_mode.mode ty eff sp.ppat_attributes
+          enter_variable loc name alloc_mode.mode ty eff' sp.ppat_attributes
       in
       rvp k {
         pat_desc = Tpat_var (id, name);
         pat_loc = loc; pat_extra=[];
         pat_type = ty;
         pat_mode = alloc_mode.mode;
+        pat_effs = eff;
         pat_attributes = sp.ppat_attributes;
         pat_env = !env }
   | Ppat_unpack name ->
@@ -1820,23 +1826,27 @@ and type_pat_aux
             pat_extra=[Tpat_unpack, name.loc, sp.ppat_attributes];
             pat_type = t;
             pat_mode = alloc_mode.mode;
+            pat_effs = eff;
             pat_attributes = [];
             pat_env = !env }
       | Some s ->
           let v = { name with txt = s } in
-          let id = enter_variable loc v alloc_mode.mode
-                     t ~is_module:true sp.ppat_attributes in
+          let id =
+            enter_variable loc v alloc_mode.mode
+              t ~is_module:true empty_effect_context sp.ppat_attributes in
           rvp k {
             pat_desc = Tpat_var (id, v);
             pat_loc = sp.ppat_loc;
             pat_extra=[Tpat_unpack, loc, sp.ppat_attributes];
             pat_mode = alloc_mode.mode;
+            pat_effs = eff;
             pat_type = t;
             pat_attributes = [];
             pat_env = !env }
       end
   | Ppat_alias(sq, name) ->
       assert construction_not_used_in_counterexamples;
+      let eff = effect_context_of_delayed_effect_context eff in
       type_pat Value sq expected_ty (fun q ->
         begin_def ();
         let ty_var, mode = build_as_type_and_mode env q in
@@ -1844,13 +1854,14 @@ and type_pat_aux
         generalize ty_var;
         let id =
           enter_variable ~is_as_variable:true loc name mode
-            ty_var sp.ppat_attributes
+            ty_var eff sp.ppat_attributes
         in
         rvp k {
           pat_desc = Tpat_alias(q, id, name);
           pat_loc = loc; pat_extra=[];
           pat_type = q.pat_type;
           pat_mode = q.pat_mode;
+          pat_effs = q.pat_effs;
           pat_attributes = sp.ppat_attributes;
           pat_env = !env })
   | Ppat_constant cst ->
@@ -1860,6 +1871,7 @@ and type_pat_aux
         pat_loc = loc; pat_extra=[];
         pat_type = type_constant cst;
         pat_mode = alloc_mode.mode;
+        pat_effs = eff;
         pat_attributes = sp.ppat_attributes;
         pat_env = !env }
   | Ppat_interval (Pconst_char c1, Pconst_char c2) ->
@@ -1897,8 +1909,8 @@ and type_pat_aux
       let tys = List.init arity (fun _ -> newgenvar ()) in
       let ty = newgenty (Ttuple tys) in
       let spl_ann =
-        List.map4
-          (fun p ty mode eff -> (p, ty, eff, simple_pat_mode mode))
+        map4
+          (fun p ty mode eff -> (p, ty, Single eff, simple_pat_mode mode))
           spl tys arg_modes arg_effs
       in
       let expected_ty = generic_instance expected_ty in
@@ -1912,6 +1924,7 @@ and type_pat_aux
         pat_loc = loc; pat_extra=[];
         pat_type = newty (Ttuple(List.map (fun p -> p.pat_type) pl));
         pat_mode = alloc_mode.mode;
+        pat_effs = eff;
         pat_attributes = sp.ppat_attributes;
         pat_env = !env })
   | Ppat_construct(lid, sarg) ->
@@ -2036,6 +2049,7 @@ and type_pat_aux
             pat_loc = loc; pat_extra=[];
             pat_type = instance expected_ty;
             pat_mode = alloc_mode.mode;
+            pat_effs = eff;
             pat_attributes = sp.ppat_attributes;
             pat_env = !env })
   | Ppat_variant(l, sarg) ->
@@ -2059,6 +2073,7 @@ and type_pat_aux
         pat_loc = loc; pat_extra=[];
         pat_type = instance expected_ty;
         pat_mode = alloc_mode.mode;
+        pat_effs = eff;
         pat_attributes = sp.ppat_attributes;
         pat_env = !env }
       in begin
@@ -2081,7 +2096,7 @@ and type_pat_aux
       in
       let type_label_pat (label_lid, label, sarg) k =
         begin_def ();
-        let (_, ty_arg, ty_res) = instance_label false label in
+        let (_, ty_arg, ty_res, eff) = instance_label false label in
         begin try
           unify_pat_types ~refine loc env ty_res (instance record_ty)
         with Error(_loc, _env, Pattern_type_clash(trace, _)) ->
@@ -2090,7 +2105,7 @@ and type_pat_aux
         end;
         end_def ();
         generalize_structure ty_res;
-        generalize_structure ty_arg;
+        generalize_scheme_structure ty_arg eff;
         let alloc_mode =
           match label.lbl_global with
           | Global -> Value_mode.global
@@ -2113,6 +2128,7 @@ and type_pat_aux
           pat_loc = loc; pat_extra=[];
           pat_type = instance record_ty;
           pat_mode = alloc_mode.mode;
+          pat_effs = eff;
           pat_attributes = sp.ppat_attributes;
           pat_env = !env;
         }
@@ -4048,10 +4064,7 @@ and type_expect_
       in
       let eff =
         List.fold_left
-          (fun eff (_, lbl, exp) ->
-            if lbl.lbl_global = Global then
-              submode_effs exp.exp_loc env exp.exp_eff Value_mode.global;
-            join_effs exp.exp_loc env eff exp.exp_eff)
+          (fun eff (_, lbl, exp) -> join_effs exp.exp_loc env eff exp.exp_eff)
           eff lbl_exp_list
       in
       re {
@@ -4073,6 +4086,11 @@ and type_expect_
         | Nonlocal -> Value_mode.local_to_regional rmode
         | Unrestricted -> rmode
       in
+      let eff =
+        match label.lbl_global with
+        | Global -> global_eff record.exp_effs
+        | Nonlocal | Unrestricted -> record.exp_effs
+      in
       submode ~loc ~env mode expected_mode;
       let (_, ty_arg, ty_res) = instance_label false label in
       unify_exp env record ty_res;
@@ -4081,6 +4099,7 @@ and type_expect_
         exp_loc = loc; exp_extra = [];
         exp_type = ty_arg;
         exp_mode = expected_mode.mode;
+        exp_effs = eff;
         exp_attributes = sexp.pexp_attributes;
         exp_env = env }
   | Pexp_setfield(srecord, lid, snewval) ->
@@ -4094,11 +4113,16 @@ and type_expect_
       unify_exp env record ty_record;
       if label.lbl_mut = Immutable then
         raise(Error(loc, env, Label_not_mutable lid.txt));
+      let eff =
+        join_effs newval.exp_loc env
+          (global_eff record.exp_effs) (global_eff newval.exp_effs)
+      in
       rue {
         exp_desc = Texp_setfield(record, label_loc, label, newval);
         exp_loc = loc; exp_extra = [];
         exp_type = instance Predef.type_unit;
         exp_mode = expected_mode.mode;
+        exp_effs = eff;
         exp_attributes = sexp.pexp_attributes;
         exp_env = env }
   | Pexp_array(sargl) ->
@@ -4113,11 +4137,19 @@ and type_expect_
           (fun sarg -> type_expect env argument_mode sarg (mk_expected ty))
           sargl
       in
+      let eff =
+        List.fold_left
+          (fun eff arg ->
+             submode_effs arg.exp_loc env arg.exp_effs Value_mode.global;
+             join_effs arg.exp_loc env eff arg.exp_effs)
+        no_effect argl
+      in
       re {
         exp_desc = Texp_array argl;
         exp_loc = loc; exp_extra = [];
         exp_type = instance ty_expected;
         exp_mode = expected_mode.mode;
+        exp_effs = eff;
         exp_attributes = sexp.pexp_attributes;
         exp_env = env }
   | Pexp_ifthenelse(scond, sifso, sifnot) ->
@@ -5486,6 +5518,8 @@ and type_label_exp create env (expected_mode : expected_mode) loc ty_expected
     with Error (_, _, Less_general _) as e -> raise e
     | _ -> raise exn    (* In case of failure return the first error *)
   in
+  if label.lbl_global = Global then
+    submode_effs arg.exp_loc env arg.exp_eff Value_mode.global;
   (lid, label, arg)
 
 and type_argument ?explanation ?recarg env (mode : expected_mode) sarg

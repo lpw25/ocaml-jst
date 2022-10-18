@@ -280,8 +280,8 @@ let newobj fields      = newty (Tobject (fields, ref None))
 
 let newconstr path tyl = newty (Tconstr (path, tyl, ref Mnil))
 
-let newmono ty = newty (Tpoly(ty, [], empty_effect_context))
-let newmono2 lv ty = newty2 lv (Tpoly(ty, [], empty_effect_context))
+let newmono ty = newty (Tpoly(ty, [], None))
+let newmono2 lv ty = newty2 lv (Tpoly(ty, [], None))
 
 let none = newty (Ttuple [])                (* Clearly ill-formed type *)
 
@@ -805,6 +805,12 @@ let rec generalize_structure var_level ty =
       iter_type_expr (generalize_structure var_level) ty
     end
   end
+
+let generalize_scheme_structure ty eff =
+  simple_abbrevs := Mnil;
+  let level = !current_level in
+  generalize_structure level ty;
+  iter_effect_context (generalize_structure level) eff
 
 let generalize_structure ty =
   simple_abbrevs := Mnil;
@@ -1523,7 +1529,7 @@ let rec copy_sep cleanup_scope fixed free bound visited ty =
             List.map2 (fun ty t -> ty,(t,bound)) tl tl' @ visited in
           let t1 = copy_sep cleanup_scope fixed free bound visited t1 in
           let eff =
-            copy_effect_context
+            copy_effect_context_option
               (copy_sep cleanup_scope fixed free bound visited) eff
           in
           Tpoly (t1, tl', eff)
@@ -1542,17 +1548,16 @@ let instance_poly' cleanup_scope ~keep_names fixed univars sch eff =
   let vars = List.map copy_var univars in
   let pairs = List.map2 (fun u v -> u, (v, [])) univars vars in
   delayed_copy := [];
-  let eff_tys = List.map snd eff.effects in 
+  let eff_tys = fold_effect_context_option (fun acc ty -> ty :: acc) [] eff in
   let free = compute_univars_list (sch :: eff_tys) in
   let ty = copy_sep cleanup_scope fixed free [] pairs sch in
-  let effects =
-    List.map
-      (fun (name, ty) -> (name, copy_sep cleanup_scope fixed free [] pairs ty))
-      eff.effects
+  let eff =
+    copy_effect_context_option
+      (copy_sep cleanup_scope fixed free [] pairs) eff
   in
   List.iter Lazy.force !delayed_copy;
   delayed_copy := [];
-  vars, ty, {effects}
+  vars, ty, eff
 
 let instance_poly ?(keep_names=false) fixed univars sch eff =
   For_copy.with_scope (fun cleanup_scope ->
@@ -1567,7 +1572,7 @@ let instance_label fixed lbl =
         {desc = Tpoly (ty, tl, eff)} ->
           instance_poly' scope ~keep_names:false fixed tl ty eff
       | _ ->
-          [], copy scope lbl.lbl_arg, empty_effect_context
+          [], copy scope lbl.lbl_arg, None
     in
     (vars, ty_arg, ty_res, eff)
   )
@@ -2055,7 +2060,7 @@ let occur_univar env ty =
       | Tpoly (ty, tyl, eff) ->
           let bound = List.fold_right TypeSet.add (List.map repr tyl) bound in
           occur_rec bound ty;
-          iter_effect_context (occur_rec bound) eff
+          iter_effect_context_option (occur_rec bound) eff
       | Tconstr (_, [], _) -> ()
       | Tconstr (p, tl, _) ->
           begin try
@@ -2110,7 +2115,7 @@ let univars_escape env univar_pairs vl ty =
           if List.exists (fun t -> TypeSet.mem (repr t) family) tl then ()
           else begin
             occur t;
-            iter_effect_context occur eff
+            iter_effect_context_option occur eff
           end
       | Tunivar _ ->
           if TypeSet.mem t family then raise Trace.(Unify [escape(Univ t)])
@@ -2170,7 +2175,7 @@ let polyfy env ty vars eff =
   For_copy.with_scope (fun scope ->
     let vars' = List.filter_map (subst_univar scope) vars in
     let ty = copy scope ty in
-    let eff = copy_effect_context (copy scope) eff in
+    let eff = copy_effect_context_option (copy scope) eff in
     let ty = newty2 ty.level (Tpoly(repr ty, vars', eff)) in
     let complete = List.length vars = List.length vars' in
     ty, complete
@@ -2179,7 +2184,7 @@ let polyfy env ty vars eff =
 (* assumption: [ty] is fully generalized. *)
 let reify_univars env ty =
   let vars = free_variables ty in
-  let ty, _ = polyfy env ty vars empty_effect_context in
+  let ty, _ = polyfy env ty vars None in
   ty
 
                               (*****************)
@@ -2425,12 +2430,12 @@ let rec mcomp type_pairs env t1 t2 =
             ()
         | (Tpoly (t1, [], eff1), Tpoly (t2, [], eff2)) ->
             mcomp type_pairs env t1 t2;
-            mcomp_effect_context type_pairs env eff1 eff2
+            mcomp_effect_context_option type_pairs env eff1 eff2
         | (Tpoly (t1, tl1, eff1), Tpoly (t2, tl2, eff2)) ->
             enter_poly env univar_pairs t1 tl1 eff1 t2 tl2 eff2
               (fun t1 eff1 t2 eff2 -> 
                 mcomp type_pairs env t1 t2;
-                mcomp_effect_context type_pairs env eff1 eff2)
+                mcomp_effect_context_option type_pairs env eff1 eff2)
         | (Tunivar _, Tunivar _) ->
             unify_univar t1' t2' !univar_pairs
         | (_, _) ->
@@ -2441,6 +2446,12 @@ and mcomp_list type_pairs env tl1 tl2 =
   if List.length tl1 <> List.length tl2 then
     raise (Unify []);
   List.iter2 (mcomp type_pairs env) tl1 tl2
+
+and mcomp_effect_context_option type_pairs env eff1 eff2 =
+  match eff1, eff2 with
+  | None, None -> ()
+  | Some eff1, Some eff2 -> mcomp_effect_context type_pairs env eff1 eff2
+  | None, Some _ | Some _, None -> raise (Unify [])
 
 and mcomp_effect_context type_pairs env eff1 eff2 =
   if List.length eff1.effects <> List.length eff2.effects then
@@ -2958,12 +2969,12 @@ and unify3 env t1 t1' t2 t2' =
           ()
       | (Tpoly (t1, [], eff1), Tpoly (t2, [], eff2)) ->
           unify env t1 t2;
-          unify_effect_context env eff1 eff2
+          unify_effect_context_option env eff1 eff2
       | (Tpoly (t1, tl1, eff1), Tpoly (t2, tl2, eff2)) ->
           enter_poly !env univar_pairs t1 tl1 eff1 t2 tl2 eff2
             (fun t1 eff1 t2 eff2 ->
               unify env t1 t2;
-              unify_effect_context env eff1 eff2)
+              unify_effect_context_option env eff1 eff2)
       | (Tpackage (p1, n1, tl1), Tpackage (p2, n2, tl2)) ->
           begin try
             unify_package !env (unify_list env)
@@ -2997,6 +3008,12 @@ and unify_list env tl1 tl2 =
   if List.length tl1 <> List.length tl2 then
     raise (Unify []);
   List.iter2 (unify env) tl1 tl2
+
+and unify_effect_context_option env eff1 eff2 =
+  match eff1, eff2 with
+  | None, None -> ()
+  | Some eff1, Some eff2 -> unify_effect_context env eff1 eff2
+  | None, Some _ | Some _, None -> raise (Unify [])
 
 and unify_effect_context env eff1 eff2 =
   if List.length eff1.effects <> List.length eff2.effects then
@@ -3338,12 +3355,12 @@ let join_effect_contexts env eff1 eff2 =
   let effects = loop env eff1.effects eff2.effects in
   {effects}
 
-let unify_effect_context env eff1 eff2 =
+let unify_effect_context_option env eff1 eff2 =
   univar_pairs := [];
   let snap = Btype.snapshot () in
   let env = ref env in
   try
-    unify_effect_context env eff1 eff2
+    unify_effect_context_option env eff1 eff2
   with
     Unify trace ->
       undo_compress snap;
@@ -3399,9 +3416,7 @@ let filter_arrow env t l force_poly =
 
 let filter_mono ty =
   match (repr ty).desc with
-  | Tpoly(ty, [], eff) ->
-      if is_empty_effect_context eff then ty
-      else raise (Unify [])
+  | Tpoly(ty, [], None) -> ty
   | _ -> raise (Unify [])
 
 let filter_arrow_mono env t l =

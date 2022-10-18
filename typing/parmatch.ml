@@ -25,6 +25,8 @@ module Value_mode = Btype.Value_mode
 (* Utilities for building patterns   *)
 (*************************************)
 
+let empty_effs = Single Btype.empty_effect_context
+
 let make_pat desc ty mode effs tenv =
   {pat_desc = desc; pat_loc = Location.none; pat_extra = [];
    pat_type = ty ; pat_mode = mode; pat_effs = effs;
@@ -38,7 +40,7 @@ let omega_list = Patterns.omega_list
 let extra_pat =
   make_pat
     (Tpat_var (Ident.create_local "+", mknoloc "+"))
-    Ctype.none Value_mode.max_mode Btype.empty_effect_context Env.empty
+    Ctype.none Value_mode.max_mode empty_effs Env.empty
 
 
 (*******************)
@@ -712,7 +714,7 @@ let set_last a =
 let mark_partial =
   let zero =
     make_pat (`Constant (Const_int 0)) Ctype.none Value_mode.max_mode
-      Btype.empty_effect_context Env.empty
+      empty_effs Env.empty
   in
   List.map (fun ((hp, _), _ as ps) ->
     match hp.pat_desc with
@@ -948,7 +950,7 @@ let build_other ext env =
           make_pat
             (Tpat_var (Ident.create_local "*extension*",
                        {txt="*extension*"; loc = d.pat_loc}))
-            Ctype.none Value_mode.max_mode Btype.empty_effect_context Env.empty
+            Ctype.none Value_mode.max_mode empty_effs Env.empty
       | Construct _ ->
           begin match ext with
           | Some ext ->
@@ -1958,7 +1960,7 @@ type ppat_of_type =
       (string, label_description) Hashtbl.t
 
 let ppat_of_type env ty =
-  match pats_of_type env ty Value_mode.max_mode Btype.empty_effect_context with
+  match pats_of_type env ty Value_mode.max_mode empty_effs with
   | [] -> PT_empty
   | [{pat_desc = Tpat_any}] -> PT_any
   | [pat] ->

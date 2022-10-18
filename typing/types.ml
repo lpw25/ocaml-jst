@@ -37,7 +37,7 @@ and type_desc =
   | Tsubst of type_expr         (* for copying *)
   | Tvariant of row_desc
   | Tunivar of string option
-  | Tpoly of type_expr * type_expr list * effect_context
+  | Tpoly of type_expr * type_expr list * effect_context option
   | Tpackage of Path.t * Longident.t list * type_expr list
 
 and arrow_desc =
@@ -160,7 +160,7 @@ module Vars = Meths
 
 type value_description =
   { val_type: type_expr;                (* Type of the value *)
-    val_effs : effect_context;
+    val_effs : effect_context option;
     val_kind: value_kind;
     val_loc: Location.t;
     val_attributes: Parsetree.attributes;

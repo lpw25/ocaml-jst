@@ -1309,7 +1309,7 @@ let make_copy_of_types env0 =
     | Val_bound vda ->
         let desc = vda.vda_description in
         let val_type = copy desc.val_type in
-        let val_effs = copy_effect_context copy desc.val_effs in
+        let val_effs = copy_effect_context_option copy desc.val_effs in
         let desc = { desc with val_type; val_effs } in
         Val_bound { vda with vda_description = desc }
   in

@@ -53,7 +53,7 @@ and 'a pattern_data =
     pat_extra : (pat_extra * Location.t * attribute list) list;
     pat_type: type_expr;
     pat_mode: value_mode;
-    pat_effs: effect_context;
+    pat_effs: delayed_effect_context;
     pat_env: Env.t;
     pat_attributes: attribute list;
    }
@@ -853,10 +853,12 @@ let let_bound_idents_with_modes_and_effs bindings =
     fun pat ->
       match pat.pat_desc with
       | Tpat_var (id, { loc }) ->
-          Ident.Tbl.add modes id (loc, pat.pat_mode, pat.pat_effs)
+          let eff = effect_context_of_delayed_effect_context pat.pat_effs in
+          Ident.Tbl.add modes id (loc, pat.pat_mode, eff)
       | Tpat_alias(p, id, { loc }) ->
           loop p;
-          Ident.Tbl.add modes id (loc, pat.pat_mode, pat.pat_effs)
+          let eff = effect_context_of_delayed_effect_context pat.pat_effs in
+          Ident.Tbl.add modes id (loc, pat.pat_mode, eff)
       | d -> shallow_iter_pattern_desc { f = loop } d
   in
   List.iter (fun vb -> loop vb.vb_pat) bindings;

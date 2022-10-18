@@ -306,8 +306,15 @@ let iter_row f row =
 let fold_effect_context f init eff =
   List.fold_left (fun init (_, ty) -> f init ty) init eff.effects
 
+let fold_effect_context_option f init = function
+  | None -> init
+  | Some eff -> fold_effect_context f init eff
+
 let iter_effect_context f eff =
   fold_effect_context (fun () ty -> f ty) () eff
+
+let iter_effect_context_option f eff =
+  fold_effect_context_option (fun () ty -> f ty) () eff
 
 let fold_type_expr f init ty =
   match ty.desc with
@@ -335,7 +342,7 @@ let fold_type_expr f init ty =
   | Tpoly (ty, tyl, eff)     ->
     let result = f init ty in
     let result = List.fold_left f result tyl in
-    fold_effect_context f result eff
+    fold_effect_context_option f result eff
   | Tpackage (_, _, l)  -> List.fold_left f init l
 
 let iter_type_expr f ty =
@@ -510,6 +517,10 @@ let copy_effect_context f eff =
   let effects = List.map (fun (s, ty) -> s, f ty) eff.effects in
   { effects }
 
+let copy_effect_context_option f = function
+  | None -> None
+  | Some eff -> Some (copy_effect_context f eff)
+
 let rec copy_type_desc ?(keep_names=false) f = function
     Tvar _ as ty        -> if keep_names then ty else Tvar None
   | Tarrow (p, ty1, ty2, c)-> Tarrow (p, f ty1, f ty2, copy_commu c)
@@ -527,7 +538,7 @@ let rec copy_type_desc ?(keep_names=false) f = function
   | Tunivar _ as ty     -> ty (* always keep the name *)
   | Tpoly (ty, tyl, eff)     ->
       let tyl = List.map (fun x -> norm_univar (f x)) tyl in
-      let eff = copy_effect_context f eff in
+      let eff = copy_effect_context_option f eff in
       Tpoly (f ty, tyl, eff)
   | Tpackage (p, n, l)  -> Tpackage (p, n, List.map f l)
 
@@ -746,8 +757,8 @@ let is_empty_effect_context eff =
 
 let is_mono ty =
   match (repr ty).desc with
-  | Tpoly(_, [], eff) -> is_empty_effect_context eff
-  | Tpoly(_, _ :: _, _) -> false
+  | Tpoly(_, [], None) -> true
+  | Tpoly(_, _ :: _, _) | Tpoly(_, _, Some _) -> false
   | _ -> assert false
 
 let get_poly ty =
@@ -757,9 +768,7 @@ let get_poly ty =
 
 let get_mono ty =
   match (repr ty).desc with
-  | Tpoly(ty, [], eff) ->
-      assert (is_empty_effect_context eff);
-      ty
+  | Tpoly(ty, [], None) -> ty
   | _ -> assert false
 
                   (**********************************)

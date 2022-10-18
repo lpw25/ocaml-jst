@@ -61,7 +61,7 @@ and 'a pattern_data =
     pat_extra : (pat_extra * Location.t * attributes) list;
     pat_type: Types.type_expr;
     pat_mode: Types.value_mode;
-    pat_effs: Types.effect_context;
+    pat_effs: delayed_effect_context;
     pat_env: Env.t;
     pat_attributes: attributes;
    }

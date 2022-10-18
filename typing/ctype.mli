@@ -199,6 +199,7 @@ val limited_generalize: type_expr -> type_expr -> unit
         (* Only generalize some part of the type
            Make the remaining of the type non-generalizable *)
 val generalize_scheme : type_expr -> effect_context -> unit
+val generalize_scheme_structure : type_expr -> effect_context -> unit
 
 val fully_generic: type_expr -> bool
 
@@ -242,7 +243,7 @@ val polyfy: Env.t -> type_expr -> type_expr list -> effect_context ->
             type_expr * bool
 val instance_label:
         bool -> label_description ->
-        type_expr list * type_expr * type_expr * effect_context
+        type_expr list * type_expr * type_expr * effect_context option
         (* Same, for a label *)
 val prim_mode :
         alloc_mode option -> (Primitive.mode * Primitive.native_repr)
@@ -286,8 +287,8 @@ val unify_var: Env.t -> type_expr -> type_expr -> unit
 val unify_alloc_mode: alloc_mode -> alloc_mode -> unit
 val join_effect_contexts:
         Env.t -> effect_context -> effect_context -> effect_context
-val unify_effect_context:
-        Env.t -> effect_context -> effect_context -> unit
+val unify_effect_context_option:
+        Env.t -> effect_context option -> effect_context option -> unit
 val filter_arrow: Env.t -> type_expr -> arg_label -> bool ->
                   alloc_mode * type_expr * alloc_mode * type_expr
         (* A special case of unification (with l:'a -> 'b). *)
