@@ -201,6 +201,7 @@ val limited_generalize: type_expr -> type_expr -> unit
 val generalize_scheme : type_expr -> effect_context -> unit
 val generalize_scheme_structure : type_expr -> effect_context -> unit
 val generalize_poly : type_expr -> effect_context option -> unit
+val generalize_poly_structure : type_expr -> effect_context option -> unit
 
 val fully_generic: type_expr -> bool
 
@@ -290,6 +291,7 @@ val join_effect_contexts:
         Env.t -> effect_context -> effect_context -> effect_context
 val unify_effect_context_option:
         Env.t -> effect_context option -> effect_context option -> unit
+val subeffect : Env.t -> effect_context -> effect_context -> unit
 val filter_arrow: Env.t -> type_expr -> arg_label -> bool ->
                   alloc_mode * type_expr * alloc_mode * type_expr
         (* A special case of unification (with l:'a -> 'b). *)

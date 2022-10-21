@@ -118,7 +118,9 @@ let compute_variance env visited vari ty =
         compute_same row.row_more
     | Tpoly (ty, _, eff) ->
         compute_same ty;
-        List.iter (fun (_, ty) -> compute_same ty) eff.effects
+        Option.iter
+          (fun eff -> List.iter (fun (_, ty) -> compute_same ty) eff.effects)
+          eff
     | Tvar _ | Tnil | Tlink _ | Tunivar _ -> ()
     | Tpackage (_, _, tyl) ->
         let v =

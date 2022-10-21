@@ -817,6 +817,12 @@ let generalize_scheme_structure ty eff =
   generalize_structure level ty;
   iter_effect_context (generalize_structure level) eff
 
+let generalize_poly_structure ty eff =
+  simple_abbrevs := Mnil;
+  let level = !current_level in
+  generalize_structure level ty;
+  iter_effect_context_option (generalize_structure level) eff
+
 let generalize_structure ty =
   simple_abbrevs := Mnil;
   generalize_structure !current_level ty
@@ -3371,6 +3377,27 @@ let unify_effect_context_option env eff1 eff2 =
       undo_compress snap;
       raise (Unify (expand_trace !env trace))
 
+let subeffect env eff1 eff2 =
+  let rec loop effects1 effects2 =
+    match effects1, effects2 with
+    | [], _ -> ()
+    | _ :: _, [] -> raise (Unify [])
+    | (n1, ty1) :: rest1, (n2, ty2) :: rest2 ->
+        if not (String.equal n1 n2) then raise (Unify []);
+        unify env ty1 ty2;
+        loop rest1 rest2
+  in
+  univar_pairs := [];
+  let snap = Btype.snapshot () in
+  let env = ref env in
+  try
+    loop eff1.effects eff2.effects
+  with
+    Unify trace ->
+      undo_compress snap;
+      raise (Unify (expand_trace !env trace))
+  
+
 
 (**** Special cases of unification ****)
 
@@ -3673,6 +3700,18 @@ and moregen_effect_context inst_nongen variance type_pairs env eff1 eff2 =
       moregen inst_nongen variance type_pairs env ty1 ty2)
     eff1.effects eff2.effects
 
+and moregen_effect_context_sub inst_nongen variance type_pairs env eff1 eff2 =
+  let rec loop effects1 effects2 =
+    match effects1, effects2 with
+    | [], _ -> ()
+    | _ :: _, [] -> raise (Unify [])
+    | (n1, ty1) :: rest1, (n2, ty2) :: rest2 ->
+        if not (String.equal n1 n2) then raise (Unify []);
+        moregen inst_nongen variance type_pairs env ty1 ty2;
+        loop rest1 rest2
+  in
+  loop eff1.effects eff2.effects
+
 and moregen_param_list inst_nongen variance type_pairs env vl tl1 tl2 =
   match vl, tl1, tl2 with
   | [], [], [] -> ()
@@ -3805,7 +3844,7 @@ let moregeneral env inst_nongen pat_sch pat_eff subj_sch subj_eff =
     | exception Unify _ -> false
     | () ->
         match
-          moregen_effect_context inst_nongen
+          moregen_effect_context_sub inst_nongen
             Covariant type_pairs env pat_eff subj_eff
         with
         | exception Unify _ -> false

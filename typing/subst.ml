@@ -387,7 +387,7 @@ let class_type s cty =
 
 let value_description' copy_scope s descr =
   { val_type = typexp copy_scope s descr.val_type;
-    val_effs = effect_context copy_scope s descr.val_effs;
+    val_eff = effect_context copy_scope s descr.val_eff;
     val_kind = descr.val_kind;
     val_loc = loc s descr.val_loc;
     val_attributes = attrs s descr.val_attributes;

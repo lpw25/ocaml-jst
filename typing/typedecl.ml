@@ -225,7 +225,7 @@ let transl_labels env closed lbls =
     List.map
       (fun ld ->
          let ty = ld.ld_type.ctyp_type in
-         let ty = match ty.desc with Tpoly(t,[],{effects=[]}) -> t | _ -> ty in
+         let ty = match ty.desc with Tpoly(t,[],None) -> t | _ -> ty in
          let gbl =
            match ld.ld_mutable with
            | Mutable -> Types.Global
@@ -496,7 +496,8 @@ let rec check_constraints_rec env loc visited ty =
   | Tpoly (ty, tl, eff) ->
       let _, ty, eff = Ctype.instance_poly false tl ty eff in
       check_constraints_rec env loc visited ty;
-      Btype.iter_effect_context (check_constraints_rec env loc visited) eff
+      Btype.iter_effect_context_option
+        (check_constraints_rec env loc visited) eff
   | _ ->
       Btype.iter_type_expr (check_constraints_rec env loc visited) ty
   end
@@ -737,7 +738,7 @@ let check_recursion ~orig_env env loc path decl to_check =
             Ctype.instance_poly ~keep_names:true false tl ty eff
           in
           check_regular cpath args prev_exp prev_expansions ty;
-          Btype.iter_effect_context
+          Btype.iter_effect_context_option
             (check_regular cpath args prev_exp prev_expansions) eff
       | _ ->
           Btype.iter_type_expr
@@ -1348,7 +1349,7 @@ let check_unboxable env loc ty =
         if tydecl.type_unboxed.default then
           Path.Set.add p acc
         else acc
-      | Tpoly (ty, [], {effects=[]}) -> check_type acc ty
+      | Tpoly (ty, [], None) -> check_type acc ty
       | _ -> acc
     with Not_found -> acc
   in
@@ -1368,7 +1369,7 @@ let transl_value_decl env loc valdecl =
   let v =
   match valdecl.pval_prim with
     [] when Env.is_in_signature env ->
-      { val_type = ty; val_effs = eff; val_kind = Val_reg; Types.val_loc = loc;
+      { val_type = ty; val_eff = eff; val_kind = Val_reg; Types.val_loc = loc;
         val_attributes = valdecl.pval_attributes;
         val_uid = Uid.mk ~current_unit:(Env.get_unit_name ());
       }
@@ -1398,7 +1399,7 @@ let transl_value_decl env loc valdecl =
       && prim.prim_native_name = ""
       then raise(Error(valdecl.pval_type.ptyp_loc, Missing_native_external));
       check_unboxable env loc ty;
-      { val_type = ty; val_effs = eff;
+      { val_type = ty; val_eff = eff;
         val_kind = Val_prim prim; Types.val_loc = loc;
         val_attributes = valdecl.pval_attributes;
         val_uid = Uid.mk ~current_unit:(Env.get_unit_name ());

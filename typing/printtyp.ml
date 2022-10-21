@@ -1477,7 +1477,7 @@ let extension_only_constructor id ppf ext =
 let tree_of_value_description id decl =
   (* Format.eprintf "@[%a@]@." raw_type_expr decl.val_type; *)
   let id = Ident.name id in
-  let ty = tree_of_type_scheme decl.val_type decl.val_effs in
+  let ty = tree_of_type_scheme decl.val_type decl.val_eff in
   let vd =
     { oval_name = id;
       oval_type = ty;

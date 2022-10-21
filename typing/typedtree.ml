@@ -53,7 +53,7 @@ and 'a pattern_data =
     pat_extra : (pat_extra * Location.t * attribute list) list;
     pat_type: type_expr;
     pat_mode: value_mode;
-    pat_effs: delayed_effect_context;
+    pat_eff: delayed_effect_context;
     pat_env: Env.t;
     pat_attributes: attribute list;
    }
@@ -100,7 +100,7 @@ and expression =
     exp_extra: (exp_extra * Location.t * attribute list) list;
     exp_type: type_expr;
     exp_mode: value_mode;
-    exp_effs : expr_effect_context;
+    exp_eff : expr_effect_context;
     exp_env: Env.t;
     exp_attributes: attribute list;
    }
@@ -695,7 +695,7 @@ let as_computation_pattern (p : pattern) : computation general_pattern =
     pat_extra = [];
     pat_type = p.pat_type;
     pat_mode = p.pat_mode;
-    pat_effs = p.pat_effs;
+    pat_eff = p.pat_eff;
     pat_env = p.pat_env;
     pat_attributes = [];
   }
@@ -853,11 +853,11 @@ let let_bound_idents_with_modes_and_effs bindings =
     fun pat ->
       match pat.pat_desc with
       | Tpat_var (id, { loc }) ->
-          let eff = effect_context_of_delayed_effect_context pat.pat_effs in
+          let eff = effect_context_of_delayed_effect_context pat.pat_eff in
           Ident.Tbl.add modes id (loc, pat.pat_mode, eff)
       | Tpat_alias(p, id, { loc }) ->
           loop p;
-          let eff = effect_context_of_delayed_effect_context pat.pat_effs in
+          let eff = effect_context_of_delayed_effect_context pat.pat_eff in
           Ident.Tbl.add modes id (loc, pat.pat_mode, eff)
       | d -> shallow_iter_pattern_desc { f = loop } d
   in
