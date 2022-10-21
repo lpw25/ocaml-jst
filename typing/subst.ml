@@ -254,11 +254,6 @@ let rec typexp copy_scope s ty =
 let effect_context copy_scope s eff =
   copy_effect_context (typexp copy_scope s) eff
 
-let effect_context_option copy_scope s eff =
-  match eff with
-  | None -> None
-  | Some eff -> Some (effect_context copy_scope s eff)
-
 (*
    Always make a copy of the type. If this is not done, type levels
    might not be correct.
@@ -392,7 +387,7 @@ let class_type s cty =
 
 let value_description' copy_scope s descr =
   { val_type = typexp copy_scope s descr.val_type;
-    val_effs = effect_context_option copy_scope s descr.val_effs;
+    val_effs = effect_context copy_scope s descr.val_effs;
     val_kind = descr.val_kind;
     val_loc = loc s descr.val_loc;
     val_attributes = attrs s descr.val_attributes;

@@ -160,7 +160,7 @@ module Vars = Meths
 
 type value_description =
   { val_type: type_expr;                (* Type of the value *)
-    val_effs : effect_context option;
+    val_effs : effect_context;
     val_kind: value_kind;
     val_loc: Location.t;
     val_attributes: Parsetree.attributes;

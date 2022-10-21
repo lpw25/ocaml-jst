@@ -457,10 +457,10 @@ let effect_context_of_payload = function
 
 let get_effect_context attr =
   match List.find_opt (check ["extension.effects"]) attr with
-  | None -> Ok []
+  | None -> Ok None
   | Some attr ->
       if not (Clflags.Extension.is_enabled Effects) then
         Error ()
       else
-        Ok (effect_context_of_payload attr.attr_payload)
+        Ok (Some (effect_context_of_payload attr.attr_payload))
 

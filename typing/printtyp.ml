@@ -525,7 +525,7 @@ and raw_type_desc ppf = function
       fprintf ppf "@[<hov1>Tpoly(@,%a,@,%a,@,%a)@]"
         raw_type t
         raw_type_list tl
-        raw_effect_context eff
+        raw_effect_context_option eff
   | Tvariant row ->
       fprintf ppf
         "@[<hov1>{@[%s@,%a;@]@ @[%s@,%a;@]@ %s%B;@ %s%a;@ @[<1>%s%t@]}@]"
@@ -544,6 +544,11 @@ and raw_type_desc ppf = function
   | Tpackage (p, _, tl) ->
       fprintf ppf "@[<hov1>Tpackage(@,%a@,%a)@]" path p
         raw_type_list tl
+
+and raw_effect_context_option ppf eff =
+  match eff with
+  | None -> fprintf ppf "-"
+  | Some eff -> raw_effect_context ppf eff
 
 and raw_effect_context ppf eff =
   pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf ";@ ")
@@ -928,7 +933,10 @@ let rec mark_loops_rec visited ty =
     | Tpoly (ty, tyl, eff) ->
         List.iter (fun t -> add_alias t) tyl;
         mark_loops_rec visited ty;
-        List.iter (fun (_, ty) -> mark_loops_rec visited ty) eff.effects
+        Option.iter
+          (fun eff ->
+            List.iter (fun (_, ty) -> mark_loops_rec visited ty) eff.effects)
+          eff
     | Tunivar _ -> add_named_var ty
 
 let mark_loops ty =
@@ -1055,19 +1063,19 @@ let rec tree_of_typexp sch ty =
     | Tlink _ ->
         fatal_error "Printtyp.tree_of_typexp"
     | Tpoly (ty, [], eff) ->
-        tree_of_effect_context sch ty eff
+        tree_of_effect_context_option sch ty eff
     | Tpoly (ty, tyl, eff) ->
         (*let print_names () =
           List.iter (fun (_, name) -> prerr_string (name ^ " ")) !names;
           prerr_string "; " in *)
         let tyl = List.map repr tyl in
-        if tyl = [] then tree_of_effect_context sch ty eff else begin
+        if tyl = [] then tree_of_effect_context_option sch ty eff else begin
           let old_delayed = !delayed in
           (* Make the names delayed, so that the real type is
              printed once when used as proxy *)
           List.iter add_delayed tyl;
           let tl = List.map (name_of_type new_name) tyl in
-          let tr = Otyp_poly (tl, tree_of_effect_context sch ty eff) in
+          let tr = Otyp_poly (tl, tree_of_effect_context_option sch ty eff) in
           (* Forget names when we leave scope *)
           remove_names tyl;
           delayed := old_delayed; tr
@@ -1084,6 +1092,14 @@ let rec tree_of_typexp sch ty =
     check_name_of_type px;
     Otyp_alias (pr_typ (), name_of_type new_name px) end
   else pr_typ ()
+
+and tree_of_effect_context_option sch ty eff =
+  let ty = tree_of_typexp sch ty in
+  match eff with
+  | None -> ty
+  | Some eff ->
+      let eff = List.map (fun (s, ty) -> (s, tree_of_typexp sch ty)) eff.effects in
+      Otyp_effect_context(ty, eff)
 
 and tree_of_effect_context sch ty eff =
   let ty = tree_of_typexp sch ty in
@@ -1189,7 +1205,10 @@ let type_scheme_max ?(b_reset_names=true) ppf ty =
   typexp true ppf ty
 (* End Maxence *)
 
-let tree_of_type_scheme ty = reset_and_mark_loops ty; tree_of_typexp true ty
+let tree_of_type_scheme ty eff =
+  reset_and_mark_loops ty;
+  reset_and_mark_effect_context eff;
+  tree_of_effect_context true ty eff
 
 (* Print one type declaration *)
 
@@ -1458,7 +1477,7 @@ let extension_only_constructor id ppf ext =
 let tree_of_value_description id decl =
   (* Format.eprintf "@[%a@]@." raw_type_expr decl.val_type; *)
   let id = Ident.name id in
-  let ty = tree_of_type_scheme decl.val_type in
+  let ty = tree_of_type_scheme decl.val_type decl.val_effs in
   let vd =
     { oval_name = id;
       oval_type = ty;
@@ -1480,7 +1499,7 @@ let value_description id ppf decl =
 let method_type (_, kind, ty) =
   match field_kind_repr kind, repr ty with
     Fpresent, {desc=Tpoly(ty, tyl, eff)} -> (ty, tyl, eff)
-  | _       , ty                    -> (ty, [], empty_effect_context)
+  | _       , ty                    -> (ty, [], None)
 
 let tree_of_metho sch concrete csil (lab, kind, ty) =
   if lab <> dummy_method then begin
@@ -1488,7 +1507,7 @@ let tree_of_metho sch concrete csil (lab, kind, ty) =
     let priv = kind <> Fpresent in
     let virt = not (Concr.mem lab concrete) in
     let (ty, tyl, eff) = method_type (lab, kind, ty) in
-    let tty = tree_of_effect_context sch ty eff in
+    let tty = tree_of_effect_context_option sch ty eff in
     remove_names tyl;
     Ocsg_method (lab, priv, virt, tty) :: csil
   end
@@ -1515,7 +1534,9 @@ let rec prepare_class_type params = function
         (fun met ->
           let ty, _, eff = method_type met in
           mark_loops ty;
-          List.iter (fun (_, ty) -> mark_loops ty) eff.effects)
+          Option.iter
+            (fun eff -> List.iter (fun (_, ty) -> mark_loops ty) eff.effects)
+            eff)
         fields;
       Vars.iter (fun _ (_, _, ty) -> mark_loops ty) sign.csig_vars
   | Cty_arrow (_, ty, cty) ->

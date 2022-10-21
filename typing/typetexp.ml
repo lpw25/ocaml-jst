@@ -542,7 +542,7 @@ and transl_type_aux env policy mode styp =
       let ty = cty.ctyp_type in
       univars := old_univars;
       end_def();
-      generalize_scheme ty eff;
+      generalize_poly ty eff;
       let ty_list =
         List.fold_left
           (fun tyl (name, ty1) ->
@@ -588,14 +588,20 @@ and transl_poly_type env policy mode t =
 and transl_type_and_effect_context env policy mode styp =
   let eff = get_effect_context styp in
   let ty = transl_type env policy mode styp in
-  let effects =
-    List.map
-      (fun (s, styp) ->
-        let cty = transl_type env policy mode styp in
-        let ty = cty.ctyp_type in
-        (s, ty)) eff
+  let eff =
+    match eff with
+    | None -> None
+    | Some eff ->
+        let effects =
+          List.map
+            (fun (s, styp) ->
+              let cty = transl_type env policy mode styp in
+              let ty = cty.ctyp_type in
+              (s, ty)) eff
+        in
+        Some {effects}
   in
-  ty, {effects}
+  ty, eff
 
 and transl_fields env policy o fields =
   let hfields = Hashtbl.create 17 in
@@ -730,6 +736,11 @@ let transl_simple_type_scheme env fixed mode styp =
     transl_type_and_effect_context env
       (if fixed then Fixed else Extensible) mode styp
   in
+  let eff =
+    match eff with
+    | None -> Btype.empty_effect_context
+    | Some eff -> eff
+  in
   globalize_used_variables env fixed ();
   make_fixed_univars_scheme typ.ctyp_type eff;
   typ, eff
@@ -750,7 +761,7 @@ let transl_simple_type_univars env styp =
     new_variables;
   globalize_used_variables env false ();
   end_def ();
-  generalize_scheme typ.ctyp_type eff;
+  generalize_poly typ.ctyp_type eff;
   let univs =
     List.fold_left
       (fun acc v ->
@@ -761,7 +772,7 @@ let transl_simple_type_univars env styp =
         | _ -> acc)
       [] !pre_univars
   in
-  make_fixed_univars_scheme typ.ctyp_type eff;
+  Option.iter (make_fixed_univars_scheme typ.ctyp_type) eff;
   { typ with ctyp_type =
       instance (Btype.newgenty (Tpoly (typ.ctyp_type, univs, eff))) }
 

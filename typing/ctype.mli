@@ -200,6 +200,7 @@ val limited_generalize: type_expr -> type_expr -> unit
            Make the remaining of the type non-generalizable *)
 val generalize_scheme : type_expr -> effect_context -> unit
 val generalize_scheme_structure : type_expr -> effect_context -> unit
+val generalize_poly : type_expr -> effect_context option -> unit
 
 val fully_generic: type_expr -> bool
 
@@ -236,10 +237,10 @@ val instance_class:
         type_expr list -> class_type -> type_expr list * class_type
 val instance_poly:
         ?keep_names:bool ->
-        bool -> type_expr list -> type_expr -> effect_context ->
-        type_expr list * type_expr * effect_context
+        bool -> type_expr list -> type_expr -> effect_context option ->
+        type_expr list * type_expr * effect_context option
         (* Take an instance of a type scheme containing free univars *)
-val polyfy: Env.t -> type_expr -> type_expr list -> effect_context ->
+val polyfy: Env.t -> type_expr -> type_expr list -> effect_context option ->
             type_expr * bool
 val instance_label:
         bool -> label_description ->

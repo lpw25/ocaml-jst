@@ -787,6 +787,11 @@ let generalize_scheme ty eff =
   generalize ty;
   iter_effect_context generalize eff
 
+let generalize_poly ty eff =
+  simple_abbrevs := Mnil;
+  generalize ty;
+  iter_effect_context_option generalize eff
+
 (* Generalize the structure and lower the variables *)
 
 let rec generalize_structure var_level ty =
@@ -3631,12 +3636,14 @@ let rec moregen inst_nongen variance type_pairs env t1 t2 =
               ()
           | (Tpoly (t1, [], eff1), Tpoly (t2, [], eff2)) ->
               moregen inst_nongen variance type_pairs env t1 t2;
-              moregen_effect_context inst_nongen variance type_pairs env eff1 eff2
+              moregen_effect_context_option
+                inst_nongen variance type_pairs env eff1 eff2
           | (Tpoly (t1, tl1, eff1), Tpoly (t2, tl2, eff2)) ->
               enter_poly env univar_pairs t1 tl1 eff1 t2 tl2 eff2
                 (fun t1 eff1 t2 eff2 ->
                   moregen inst_nongen variance type_pairs env t1 t2;
-                  moregen_effect_context inst_nongen variance type_pairs env eff1 eff2)
+                  moregen_effect_context_option
+                    inst_nongen variance type_pairs env eff1 eff2)
           | (Tunivar _, Tunivar _) ->
               unify_univar t1' t2' !univar_pairs
           | (_, _) ->
@@ -3648,6 +3655,14 @@ and moregen_list inst_nongen variance type_pairs env tl1 tl2 =
   if List.length tl1 <> List.length tl2 then
     raise (Unify []);
   List.iter2 (moregen inst_nongen variance type_pairs env) tl1 tl2
+
+and moregen_effect_context_option inst_nongen variance type_pairs env e1 e2 =
+  match e1, e2 with
+  | None, None -> ()
+  | Some eff1, Some eff2 ->
+      moregen_effect_context inst_nongen variance type_pairs env eff1 eff2
+  | None, Some _ | Some _, None ->
+      raise (Unify [])
 
 and moregen_effect_context inst_nongen variance type_pairs env eff1 eff2 =
   if List.length eff1.effects <> List.length eff2.effects then
@@ -3939,12 +3954,14 @@ let rec eqtype rename type_pairs subst env t1 t2 =
               ()
           | (Tpoly (t1, [], eff1), Tpoly (t2, [], eff2)) ->
               eqtype rename type_pairs subst env t1 t2;
-              eqtype_effect_context rename type_pairs subst env eff1 eff2
+              eqtype_effect_context_option
+                rename type_pairs subst env eff1 eff2
           | (Tpoly (t1, tl1, eff1), Tpoly (t2, tl2, eff2)) ->
               enter_poly env univar_pairs t1 tl1 eff1 t2 tl2 eff2
                 (fun t1 eff1 t2 eff2 ->
                   eqtype rename type_pairs subst env t1 t2;
-                  eqtype_effect_context rename type_pairs subst env eff1 eff2)
+                  eqtype_effect_context_option
+                    rename type_pairs subst env eff1 eff2)
           | (Tunivar _, Tunivar _) ->
               unify_univar t1' t2' !univar_pairs
           | (_, _) ->
@@ -3956,6 +3973,13 @@ and eqtype_list rename type_pairs subst env tl1 tl2 =
   if List.length tl1 <> List.length tl2 then
     raise (Unify []);
   List.iter2 (eqtype rename type_pairs subst env) tl1 tl2
+
+and eqtype_effect_context_option rename type_pairs subst env eff1 eff2 =
+  match eff1, eff2 with
+  | None, None -> ()
+  | Some eff1, Some eff2 ->
+      eqtype_effect_context rename type_pairs subst env eff1 eff2
+  | None, Some _ | Some _, None -> raise (Unify [])
 
 and eqtype_effect_context rename type_pairs subst env eff1 eff2 =
   if List.length eff1.effects <> List.length eff2.effects then
@@ -4579,16 +4603,19 @@ let rec build_subtype env visited loops posi level t =
   | Tpoly(t1, tl, eff) ->
       let (t1', c1) = build_subtype env visited loops posi level t1 in
       let (eff', c2) =
-        let effects =
-          List.map
-            (fun (n, ty) ->
-              let ty, c = build_subtype env visited loops posi level ty in
-              (n, ty), c)
-            eff.effects
-        in
-        let c = collect effects in
-        if c > Unchanged then ({ effects = List.map fst effects }, c)
-        else (eff, Unchanged)
+        match eff with
+        | None -> (None, Unchanged)
+        | (Some eff) as effo ->
+            let effects =
+              List.map
+                (fun (n, ty) ->
+                  let ty, c = build_subtype env visited loops posi level ty in
+                  (n, ty), c)
+                eff.effects
+            in
+            let c = collect effects in
+            if c > Unchanged then (Some { effects = List.map fst effects }, c)
+            else (effo, Unchanged)
       in
       let c = max c1 c2 in
       if c > Unchanged then (newty (Tpoly(t1', tl, eff')), c)
@@ -4694,17 +4721,17 @@ let rec subtype_rec env trace t1 t2 cstrs =
         end
     | (Tpoly (u1, [], eff1), Tpoly (u2, [], eff2)) ->
         let cstrs = subtype_rec env trace u1 u2 cstrs in
-        subtype_effect_context env trace eff1 eff2 cstrs
+        subtype_effect_context_option env trace eff1 eff2 cstrs
     | (Tpoly (u1, tl1, eff1), Tpoly (u2, [], eff2)) ->
         let _, u1', eff1' = instance_poly false tl1 u1 eff1 in
         let cstrs = subtype_rec env trace u1' u2 cstrs in
-        subtype_effect_context env trace eff1' eff2 cstrs
+        subtype_effect_context_option env trace eff1' eff2 cstrs
     | (Tpoly (u1, tl1, eff1), Tpoly (u2, tl2, eff2)) ->
         begin try
           enter_poly env univar_pairs u1 tl1 eff1 u2 tl2 eff2
             (fun t1 eff1 t2 eff2 ->
               let cstrs = subtype_rec env trace t1 t2 cstrs in
-              subtype_effect_context env trace eff1 eff2 cstrs)
+              subtype_effect_context_option env trace eff1 eff2 cstrs)
         with Unify _ ->
           (trace, t1, t2, !univar_pairs)::cstrs
         end
@@ -4743,6 +4770,12 @@ and subtype_list env trace tl1 tl2 cstrs =
   List.fold_left2
     (fun cstrs t1 t2 -> subtype_rec env (Trace.diff t1 t2::trace) t1 t2 cstrs)
     cstrs tl1 tl2
+
+and subtype_effect_context_option env trace eff1 eff2 cstrs =
+  match eff1, eff2 with
+  | None, None -> cstrs
+  | Some eff1, Some eff2 -> subtype_effect_context env trace eff1 eff2 cstrs
+  | None, Some _ | Some _, None -> subtype_error env trace
 
 and subtype_effect_context env trace eff1 eff2 cstrs =
   if List.length eff1.effects <> List.length eff2.effects then
