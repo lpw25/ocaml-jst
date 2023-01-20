@@ -768,7 +768,7 @@ let get_poly ty =
 
 let get_mono ty =
   match (repr ty).desc with
-  | Tpoly(ty, [], None) -> ty
+  | Tpoly(ty, [], _) -> ty
   | _ -> assert false
 
                   (**********************************)

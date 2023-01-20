@@ -271,7 +271,7 @@ let enter_met_env ?check loc lab kind unbound_kind ty class_env =
   let par_env = Env.enter_unbound_value lab unbound_kind par_env in
   let (id, met_env) =
     Env.enter_value ?check lab
-      {val_type = ty; val_kind = kind;
+      {val_type = ty; val_kind = kind; val_eff = empty_effect_context;
        val_attributes = []; Types.val_loc = loc;
        val_uid = Uid.mk ~current_unit:(Env.get_unit_name ()); } met_env
   in

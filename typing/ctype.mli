@@ -189,6 +189,7 @@ val generalize: type_expr -> unit
 val lower_contravariant: Env.t -> type_expr -> unit
         (* Lower level of type variables inside contravariant branches;
            to be used before generalize for expansive expressions *)
+val lower_effect_context: Env.t -> effect_context -> unit
 val generalize_structure: type_expr -> unit
         (* Same, but variables are only lowered to !current_level *)
 val generalize_spine: type_expr -> unit
@@ -231,6 +232,10 @@ val instance_parameterized_type:
 val instance_parameterized_type_2:
         type_expr list -> type_expr list -> type_expr ->
         type_expr list * type_expr list * type_expr
+val instance_parameterized_poly:
+        ?keep_names:bool ->
+        type_expr list -> type_expr -> effect_context option ->
+        type_expr list * type_expr * effect_context option
 val instance_declaration: type_declaration -> type_declaration
 val generic_instance_declaration: type_declaration -> type_declaration
         (* Same as instance_declaration, but new nodes at generic_level *)

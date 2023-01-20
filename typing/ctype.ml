@@ -1054,6 +1054,9 @@ let lower_contravariant env ty =
   simple_abbrevs := Mnil;
   lower_contravariant env !nongen_level (Hashtbl.create 7) false ty
 
+let lower_effect_context env eff =
+  iter_effect_context (update_level env !nongen_level) eff
+
 (* Correct the levels of type [ty]. *)
 let correct_levels ty =
   duplicate_type ty
@@ -1418,6 +1421,14 @@ let instance_parameterized_type_2 sch_args sch_lst sch =
     let ty_lst = List.map (copy scope) sch_lst in
     let ty = copy scope sch in
     (ty_args, ty_lst, ty)
+  )
+
+let instance_parameterized_poly ?keep_names sch_args sch eff =
+  For_copy.with_scope (fun scope ->
+    let ty_args = List.map (fun t -> copy ?keep_names scope t) sch_args in
+    let ty = copy scope sch in
+    let eff = copy_effect_context_option (copy scope) eff in
+    (ty_args, ty, eff)
   )
 
 let map_kind f = function

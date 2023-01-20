@@ -268,6 +268,25 @@ let type_scheme s sch eff =
       let eff = effect_context copy_scope s eff in
       sch, eff)
 
+let delayed_effect_context copy_scope s = function
+  | Tuple(effs, eff) ->
+      let effs = List.map (effect_context copy_scope) effs in
+      let eff = effect_context copy_scope eff in
+      Tuple(effs, eff)
+  | Single eff -> Single (effect_context copy_scope eff)
+
+let expr_effect_context copy_scope s { current; delayed } =
+  let current = effect_context copy_scope current in
+  let delayed = delayed_effect_context copy_scope delayed in
+  { current; delayed }
+
+let expression_type s ty eff =
+  For_copy.with_scope
+    (fun copy_scope ->
+      let ty = typexp copy_scope s ty in
+      let eff = expr_effect_context copy_scope s eff in
+      ty, eff)
+
 let label_declaration copy_scope s l =
   {
     ld_id = l.ld_id;
