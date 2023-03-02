@@ -271,7 +271,7 @@ let enter_met_env ?check loc lab kind unbound_kind ty class_env =
   let par_env = Env.enter_unbound_value lab unbound_kind par_env in
   let (id, met_env) =
     Env.enter_value ?check lab
-      {val_type = ty; val_kind = kind; val_eff = empty_effect_context;
+      {val_type = ty; val_kind = kind; val_eff = Btype.empty_effect_context;
        val_attributes = []; Types.val_loc = loc;
        val_uid = Uid.mk ~current_unit:(Env.get_unit_name ()); } met_env
   in
@@ -745,8 +745,8 @@ and class_field_aux self_loc cl_num self_type meths vars
               let ty' = Ctype.newvar () in
               Ctype.unify val_env (Ctype.newmono ty') ty;
               type_approx val_env sbody ty'
-          | Tpoly (ty1, tl) ->
-              let _, ty1' = Ctype.instance_poly false tl ty1 in
+          | Tpoly (ty1, tl, eff) ->
+              let _, ty1', _ = Ctype.instance_poly false tl ty1 eff in
               type_approx val_env sbody ty1'
           | _ -> assert false
           end
@@ -767,7 +767,7 @@ and class_field_aux self_loc cl_num self_type meths vars
              let arrow_desc =
                Nolabel, Alloc_mode.global, Alloc_mode.global
              in
-             let self_param_type = Btype.newgenty (Tpoly(self_type, [])) in
+             let self_param_type = Btype.newgenty (Tpoly(self_type, [], None)) in
              let meth_type = mk_expected (
                Btype.newgenty (Tarrow(arrow_desc, self_param_type, ty, Cok))
              ) in
@@ -797,7 +797,7 @@ and class_field_aux self_loc cl_num self_type meths vars
           let arrow_desc =
             Nolabel, Alloc_mode.global, Alloc_mode.global
           in
-          let self_param_type = Btype.newgenty (Tpoly(self_type, [])) in
+          let self_param_type = Btype.newgenty (Tpoly(self_type, [], None)) in
           let meth_type = mk_expected (
             Ctype.newty
               (Tarrow (arrow_desc, self_param_type,
@@ -1053,16 +1053,18 @@ and class_expr_aux cl_num val_env met_env scl =
       end;
       let pv =
         List.map
-          begin fun (id, id', _ty) ->
+          begin fun (id, id') ->
             let path = Pident id' in
             (* do not mark the value as being used *)
             let vd = Env.find_value path val_env' in
+            let ty, eff = Ctype.instance_scheme vd.val_type vd.val_eff in
             (id,
              {exp_desc =
               Texp_ident(path, mknoloc (Longident.Lident (Ident.name id)), vd,
                          Id_value);
               exp_loc = Location.none; exp_extra = [];
-              exp_type = Ctype.instance vd.val_type;
+              exp_type = ty;
+              exp_eff = Btype.delayed_eff eff;
               exp_mode = Value_mode.global;
               exp_attributes = []; (* check *)
               exp_env = val_env'})
@@ -1221,22 +1223,25 @@ and class_expr_aux cl_num val_env met_env scl =
              (* do not mark the value as used *)
              let vd = Env.find_value path val_env in
              Ctype.begin_def ();
+             let ty, eff = Ctype.instance_scheme vd.val_type vd.val_eff in
              let expr =
                {exp_desc =
                 Texp_ident(path, mknoloc(Longident.Lident (Ident.name id)),vd,
                            Id_value);
                 exp_loc = Location.none; exp_extra = [];
-                exp_type = Ctype.instance vd.val_type;
+                exp_type = ty;
                 exp_mode = Value_mode.global;
+                exp_eff = Btype.delayed_eff eff;
                 exp_attributes = [];
                 exp_env = val_env;
                }
              in
              Ctype.end_def ();
-             Ctype.generalize expr.exp_type;
+             Ctype.generalize_scheme ty eff;
              let desc =
                {val_type = expr.exp_type; val_kind = Val_ivar (Immutable,
                                                                cl_num);
+                val_eff = eff;
                 val_attributes = [];
                 Types.val_loc = vd.Types.val_loc;
                 val_uid = vd.val_uid;

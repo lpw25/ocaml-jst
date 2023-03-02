@@ -270,14 +270,14 @@ let type_scheme s sch eff =
 
 let delayed_effect_context copy_scope s = function
   | Tuple(effs, eff) ->
-      let effs = List.map (effect_context copy_scope) effs in
-      let eff = effect_context copy_scope eff in
+      let effs = List.map (effect_context copy_scope s) effs in
+      let eff = effect_context copy_scope s eff in
       Tuple(effs, eff)
-  | Single eff -> Single (effect_context copy_scope eff)
+  | Single eff -> Single (effect_context copy_scope s eff)
 
 let expr_effect_context copy_scope s { current; delayed } =
-  let current = effect_context copy_scope current in
-  let delayed = delayed_effect_context copy_scope delayed in
+  let current = effect_context copy_scope s current in
+  let delayed = delayed_effect_context copy_scope s delayed in
   { current; delayed }
 
 let expression_type s ty eff =

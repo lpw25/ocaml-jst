@@ -101,6 +101,15 @@ val proxy: type_expr -> type_expr
 val empty_effect_context : effect_context
 val is_empty_effect_context : effect_context -> bool
 
+val effect_context_of_delayed_effect_context :
+  delayed_effect_context -> effect_context
+
+val no_effect : expr_effect_context
+
+val delayed_eff : effect_context -> expr_effect_context
+
+val current_eff : effect_context -> expr_effect_context
+
 (* Poly types. *)
 
 (* These three functions can only be called on [Tpoly] nodes. *)
@@ -303,6 +312,8 @@ module Alloc_mode : sig
 
   val equate : t -> t -> (unit, unit) result
 
+  val submode_effs : effect_context -> t -> (unit, unit) result
+
   val make_global_exn : t -> unit
 
   val make_local_exn : t -> unit
@@ -310,6 +321,8 @@ module Alloc_mode : sig
   val join_const : const -> const -> const
 
   val join : t list -> t
+
+  val join_effs : t -> effect_context -> t
 
   (* Force a mode variable to its upper bound *)
   val constrain_upper : t -> const
@@ -406,11 +419,11 @@ module Value_mode : sig
 
   val submode_exn : t -> t -> unit
 
-  val submode_effs : effect_context -> t -> (unit, unit) result
-
   val submode_meet : t -> t list -> (unit, error) result
 
   val join : t list -> t
+
+  val join_effs : t -> effect_context -> t
 
   val constrain_upper : t -> const
 

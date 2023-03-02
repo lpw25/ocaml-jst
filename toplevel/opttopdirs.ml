@@ -138,10 +138,12 @@ let match_printer_type ppf desc typename =
         raise Exit
   in
   Ctype.begin_def();
+  let ty, eff = Ctype.instance_scheme desc.val_type desc.val_eff in
   let ty_arg = Ctype.newvar() in
   Ctype.unify !toplevel_env
     (Ctype.newconstr printer_type [ty_arg])
-    (Ctype.instance desc.val_type);
+    (ty);
+  Ctype.subeffect !toplevel_env eff Btype.empty_effect_context;
   Ctype.end_def();
   Ctype.generalize ty_arg;
   ty_arg

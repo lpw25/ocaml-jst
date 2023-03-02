@@ -618,3 +618,11 @@ type value_mode =
   (* See Btype.Value_mode *)
   { r_as_l : alloc_mode;
     r_as_g : alloc_mode; }
+
+type delayed_effect_context =
+  | Tuple of effect_context list * effect_context
+  | Single of effect_context
+
+type expr_effect_context =
+  { current : effect_context;
+    delayed : delayed_effect_context; }

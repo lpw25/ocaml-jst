@@ -201,8 +201,11 @@ val limited_generalize: type_expr -> type_expr -> unit
            Make the remaining of the type non-generalizable *)
 val generalize_scheme : type_expr -> effect_context -> unit
 val generalize_scheme_structure : type_expr -> effect_context -> unit
-val generalize_poly : type_expr -> effect_context option -> unit
-val generalize_poly_structure : type_expr -> effect_context option -> unit
+val generalize_expr_scheme_structure
+    : type_expr -> delayed_effect_context -> unit
+val generalize_poly_scheme : type_expr -> effect_context option -> unit
+val generalize_poly_scheme_structure :
+  type_expr -> effect_context option -> unit
 
 val fully_generic: type_expr -> bool
 
@@ -221,6 +224,13 @@ val generic_instance: type_expr -> type_expr
 val instance_list: type_expr list -> type_expr list
         (* Take an instance of a list of type schemes *)
 val instance_scheme: type_expr -> effect_context -> type_expr * effect_context
+val instance_poly_scheme:
+  type_expr -> effect_context option -> type_expr * effect_context option
+val instance_poly_effect_context:
+  effect_context option -> effect_context option
+val instance_expr_scheme:
+  ?partial:bool -> type_expr -> delayed_effect_context ->
+  type_expr * delayed_effect_context
 val existential_name: constructor_description -> type_expr -> string
 val instance_constructor:
         ?in_pattern:Env.t ref * int ->

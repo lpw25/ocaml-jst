@@ -743,9 +743,9 @@ let rec extract_label_aux hd l = function
 let extract_label l ls = extract_label_aux [] l ls
 
 
-                  (********************************)
-                  (*  Utilities for poly types    *)
-                  (********************************)
+                  (***********************************)
+                  (*  Utilities for effect contexts  *)
+                  (***********************************)
 
 let empty_effect_context =
   { effects = [] }
@@ -754,6 +754,27 @@ let is_empty_effect_context eff =
   match eff.effects with
   | [] -> true
   | _ :: _ -> false
+
+let effect_context_of_delayed_effect_context = function
+  | Tuple(_, eff) -> eff
+  | Single eff -> eff
+
+let no_effect =
+  { delayed = Single empty_effect_context;
+    current = empty_effect_context; }
+
+let delayed_eff eff =
+  { delayed = Single eff;
+    current = empty_effect_context; }
+
+let current_eff eff =
+  { delayed = Single empty_effect_context;
+    current = eff; }
+
+
+                  (********************************)
+                  (*  Utilities for poly types    *)
+                  (********************************)
 
 let is_mono ty =
   match (repr ty).desc with
@@ -1018,6 +1039,14 @@ module Alloc_mode = struct
     | Ok (), Ok () -> Ok ()
     | Error (), _ | _, Error () -> Error ()
 
+  let submode_effs eff t =
+    match eff.effects with
+    | [] -> Ok ()
+    | _ :: _ ->
+        match submode local t with
+        | Ok () as ok -> ok
+        | Error _ -> Error ()
+
   let make_global_exn t =
     submode_exn t global
 
@@ -1060,6 +1089,11 @@ module Alloc_mode = struct
       | Amode Local :: _ -> local
       | Amodevar v :: ms -> aux (v :: vars) ms
     in aux [] ms
+
+  let join_effs m eff =
+    match eff.effects with
+    | [] -> m
+    | _ :: _ -> local
 
   let constrain_upper = function
     | Amode m -> m
@@ -1275,14 +1309,6 @@ module Value_mode = struct
     | Ok () -> ()
     | Error _ -> invalid_arg "submode_exn"
 
-  let submode_effs eff t =
-    match eff.effects with
-    | [] -> Ok ()
-    | _ :: _ ->
-        match submode local t with
-        | Ok () as ok -> ok
-        | Error _ -> Error ()
-
   let rec submode_meet t = function
     | [] -> Ok ()
     | t' :: rest ->
@@ -1294,6 +1320,11 @@ module Value_mode = struct
     let r_as_l = Alloc_mode.join (List.map (fun t -> t.r_as_l) ts) in
     let r_as_g = Alloc_mode.join (List.map (fun t -> t.r_as_g) ts) in
     { r_as_l; r_as_g }
+
+  let join_effs m eff =
+    match eff.effects with
+    | [] -> m
+    | _ :: _ -> local
 
   let constrain_upper t =
     let r_as_l = Alloc_mode.constrain_upper t.r_as_l in

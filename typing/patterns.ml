@@ -27,7 +27,6 @@ let omega = {
   pat_extra = [];
   pat_type = Ctype.none;
   pat_mode = Value_mode.min_mode;
-  pat_eff = Single Btype.empty_effect_context;
   pat_env = Env.empty;
   pat_attributes = [];
 }

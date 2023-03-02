@@ -212,7 +212,7 @@ let rec push_defaults loc bindings cases partial warnings =
   | {c_lhs=pat; c_rhs=exp; c_guard=_} :: _ when bindings <> [] ->
       let param = Typecore.name_cases "param" cases in
       let desc =
-        {val_type = pat.pat_type; val_effs = pat.pat_effs;
+        {val_type = pat.pat_type; val_eff = Btype.empty_effect_context;
          val_kind = Val_reg; val_attributes = [];
          Types.val_loc = Location.none;
          val_uid = Types.Uid.internal_not_actually_unique; }

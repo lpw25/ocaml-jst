@@ -787,7 +787,7 @@ let generalize_scheme ty eff =
   generalize ty;
   iter_effect_context generalize eff
 
-let generalize_poly ty eff =
+let generalize_poly_scheme ty eff =
   simple_abbrevs := Mnil;
   generalize ty;
   iter_effect_context_option generalize eff
@@ -817,11 +817,22 @@ let generalize_scheme_structure ty eff =
   generalize_structure level ty;
   iter_effect_context (generalize_structure level) eff
 
-let generalize_poly_structure ty eff =
+let generalize_poly_scheme_structure ty eff =
   simple_abbrevs := Mnil;
   let level = !current_level in
   generalize_structure level ty;
   iter_effect_context_option (generalize_structure level) eff
+
+let generalize_expr_scheme_structure ty delayed =
+  simple_abbrevs := Mnil;
+  let level = !current_level in
+  generalize_structure level ty;
+  match delayed with
+  | Single eff ->
+      iter_effect_context (generalize_structure level) eff
+  | Tuple(effs, eff) ->
+      List.iter (iter_effect_context (generalize_structure level)) effs;
+      iter_effect_context (generalize_structure level) eff      
 
 let generalize_structure ty =
   simple_abbrevs := Mnil;
@@ -1327,11 +1338,43 @@ let instance ?partial sch =
   in
   For_copy.with_scope (fun scope -> copy ?partial scope sch)
 
+let instance_poly_effect_context eff =
+  For_copy.with_scope
+    (fun scope -> copy_effect_context_option (copy scope) eff)
+
 let instance_scheme sch eff =
   For_copy.with_scope
     (fun scope ->
       let sch = copy scope sch in
       let eff = copy_effect_context (copy scope) eff in
+      sch, eff)
+
+let instance_poly_scheme sch eff =
+  For_copy.with_scope
+    (fun scope ->
+      let sch = copy scope sch in
+      let eff = copy_effect_context_option (copy scope) eff in
+      sch, eff)
+
+let instance_expr_scheme ?partial sch eff =
+  let partial =
+    match partial with
+      None -> None
+    | Some keep -> Some (compute_univars sch, keep)
+  in
+  For_copy.with_scope
+    (fun scope ->
+      let sch = copy ?partial scope sch in
+      let eff =
+        match eff with
+        | Single eff -> Single (copy_effect_context (copy ?partial scope) eff)
+        | Tuple(effs, eff) ->
+            let eff = copy_effect_context (copy ?partial scope) eff in
+            let effs =
+              List.map (copy_effect_context (copy ?partial scope)) effs
+            in
+            Tuple(effs, eff)
+      in
       sch, eff)
 
 let generic_instance sch =

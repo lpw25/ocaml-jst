@@ -91,7 +91,7 @@ val type_expression:
 val type_class_arg_pattern:
         string -> Env.t -> Env.t -> arg_label -> Parsetree.pattern ->
         Typedtree.pattern *
-        (Ident.t * Ident.t * type_expr) list *
+        (Ident.t * Ident.t) list *
         Env.t * Env.t
 val type_self_pattern:
         string -> type_expr -> Env.t -> Env.t -> Env.t -> Parsetree.pattern ->
@@ -207,6 +207,8 @@ type error =
   | Local_return_annotation_mismatch of Location.t
   | Bad_tail_annotation of [`Conflict|`Not_a_tailcall]
   | Optional_poly_param
+  | Effect_type_clash of Ctype.Unification_trace.t * bool
+  | Effect_mode_clash of effect_context
 
 exception Error of Location.t * Env.t * error
 exception Error_forward of Location.error

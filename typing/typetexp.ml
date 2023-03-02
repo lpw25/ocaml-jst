@@ -542,7 +542,7 @@ and transl_type_aux env policy mode styp =
       let ty = cty.ctyp_type in
       univars := old_univars;
       end_def();
-      generalize_poly ty eff;
+      generalize_poly_scheme ty eff;
       let ty_list =
         List.fold_left
           (fun tyl (name, ty1) ->
@@ -761,7 +761,7 @@ let transl_simple_type_univars env styp =
     new_variables;
   globalize_used_variables env false ();
   end_def ();
-  generalize_poly typ.ctyp_type eff;
+  generalize_poly_scheme typ.ctyp_type eff;
   let univs =
     List.fold_left
       (fun acc v ->
