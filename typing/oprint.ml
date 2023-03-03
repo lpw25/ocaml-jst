@@ -274,6 +274,9 @@ let rec print_out_type_0 mode ppf =
       fprintf ppf "@[<hov 2>%a.@ %a@]"
         pr_vars sl
         (print_out_type_0 mode) ty
+  | Otyp_effect_context(t, eff) ->
+      fprintf ppf "@[<1>%a [%a]@]"
+        (print_out_type_0 mode) t print_out_effect_context eff
   | ty ->
       print_out_type_1 mode ppf ty
 
@@ -360,7 +363,7 @@ and print_out_type_3 mode ppf =
          else if tags = None then "> " else "? ")
         print_fields row_fields
         print_present tags
-  | Otyp_alias _ | Otyp_poly _ | Otyp_arrow _ | Otyp_tuple _ as ty ->
+  | Otyp_alias _ | Otyp_poly _ | Otyp_effect_context _ | Otyp_arrow _ | Otyp_tuple _ as ty ->
       pp_open_box ppf 1;
       pp_print_char ppf '(';
       print_out_type_0 mode ppf ty;
@@ -382,9 +385,7 @@ and print_out_type_3 mode ppf =
   | Otyp_attribute (t, attr) ->
       fprintf ppf "@[<1>(%a [@@%s])@]"
         (print_out_type_0 mode) t attr.oattr_name
-  | Otyp_effect_context(t, eff) ->
-      fprintf ppf "@[<1>(%a [%a])@]"
-        (print_out_type_0 mode) t print_out_effect_context eff
+
 and print_out_type ppf typ =
   print_out_type_0 Oam_global ppf typ
 and print_simple_out_type ppf typ =

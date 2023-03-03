@@ -388,7 +388,7 @@ module Extension = struct
     | Comprehensions -> "comprehensions"
     | Local -> "local"
     | Include_functor -> "include_functor"
-    | Effects -> "include_functor"
+    | Effects -> "effects"
 
   let of_string = function
     | "comprehensions" -> Comprehensions

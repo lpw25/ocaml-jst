@@ -453,6 +453,8 @@ let effect_of_expression pexp =
 let effect_context_of_payload = function
   | PStr[{pstr_desc=Pstr_eval({pexp_desc=Pexp_tuple pexps},_)}] ->
       List.filter_map effect_of_expression pexps
+  | PStr[{pstr_desc=Pstr_eval({pexp_desc=Pexp_extension _} as pexp,_)}] ->
+      List.filter_map effect_of_expression [pexp]
   | _ -> []
 
 let get_effect_context attr =
