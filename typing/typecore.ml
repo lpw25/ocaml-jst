@@ -472,6 +472,16 @@ let lower_delayed_eff loc env eff =
       List.iter (lower_effect_context loc env) effs;
       lower_effect_context loc env eff
 
+let generalize_delayed_effect_context eff =
+  match eff with
+  | Single eff -> generalize_effect_context eff
+  | Tuple(effs, eff) ->
+      List.iter generalize_effect_context effs;
+      generalize_effect_context eff
+
+let generalize_delayed_eff eff =
+  generalize_delayed_effect_context eff.delayed
+
 let join_expr_effs loc env is_current eff1 eff2 =
   match Ctype.join_effect_contexts env eff1 eff2 with
   | exception Unify trace ->
@@ -837,14 +847,16 @@ let instance_pattern_scheme
   | Tuple(_, eff) -> instance_tuple_pattern_scheme ty eff
 
 let generalize_pat_var_scheme_structure ty (eff : effect_context_pat_var) =
+  generalize_structure ty;
   match eff with
-  | Known eff -> generalize_scheme_structure ty eff
-  | Unknown _ | Join _ -> generalize_structure ty
+  | Known eff -> generalize_effect_context_structure eff
+  | Unknown _ | Join _ -> ()
 
 let generalize_pat_var_scheme ty (eff : effect_context_pat_var) =
+  generalize ty;
   match eff with
-  | Known eff -> generalize_scheme ty eff
-  | Unknown _ | Join _ -> generalize ty
+  | Known eff -> generalize_effect_context eff
+  | Unknown _ | Join _ -> ()
 
 let instance_pat_var_scheme
           ty (eff : effect_context_pat_var) : _ * effect_context_pat_var =
@@ -2283,7 +2295,8 @@ and type_pat_aux
         end;
         end_def ();
         generalize_structure ty_res;
-        generalize_poly_scheme_structure ty_arg eff';
+        generalize_structure ty_arg;
+        generalize_poly_effect_context_structure eff';
         let alloc_mode =
           match label.lbl_global with
           | Global -> Value_mode.global
@@ -3438,7 +3451,8 @@ let check_univars env kind exp ty_expected vars eff =
     | _ -> assert false
   in
   end_def ();
-  generalize_poly_scheme exp_ty eff;
+  generalize exp_ty;
+  generalize_poly_effect_context eff;
   List.iter generalize vars;
   let ty, complete = polyfy env exp_ty vars eff in
   if not complete then
@@ -3448,7 +3462,8 @@ let check_univars env kind exp ty_expected vars eff =
 
 let generalize_and_check_univars env kind exp ty_expected vars eff =
   generalize exp.exp_type;
-  generalize_poly_scheme ty_expected eff;
+  generalize ty_expected;
+  generalize_poly_effect_context eff;
   List.iter generalize vars;
   check_univars env kind exp ty_expected vars eff
 
@@ -4026,8 +4041,12 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
       let arg = type_exp env arg_expected_mode sarg in
       end_def ();
       lower_current_eff loc env arg.exp_eff;
-      if maybe_expansive arg then lower_contravariant env arg.exp_type;
+      if maybe_expansive arg then begin
+          lower_contravariant env arg.exp_type;
+          lower_delayed_eff arg.exp_loc env arg.exp_eff;
+      end;
       generalize arg.exp_type;
+      generalize_delayed_eff arg.exp_eff;
       let arg_eff, eff = match_eff arg.exp_eff in
       let cases, partial, body_eff =
         type_cases Computation env arg_pat_mode expected_mode
@@ -4989,7 +5008,8 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
             let vars, ty'', eff = instance_poly true tl ty' eff in
             if !Clflags.principal then begin
                 end_def ();
-                generalize_poly_scheme_structure ty'' eff
+                generalize_structure ty'';
+                generalize_poly_effect_context_structure eff
               end;
             let exp = type_expect env expected_mode sbody (mk_expected ty'') in
             let eff = instance_poly_effect_context eff in
@@ -5784,7 +5804,8 @@ and type_label_exp create env (expected_mode : expected_mode) loc ty_expected
   if separate then begin
       end_def ();
       (* Generalize label information *)
-      generalize_poly_scheme_structure ty_arg eff;
+      generalize_structure ty_arg;
+      generalize_poly_effect_context_structure eff;
       generalize_structure ty_res
     end;
   begin try
@@ -5797,7 +5818,8 @@ and type_label_exp create env (expected_mode : expected_mode) loc ty_expected
   if separate then begin
       end_def ();
       (* Generalize information merged from ty_expected *)
-      generalize_poly_scheme_structure ty_arg eff
+      generalize_structure ty_arg;
+      generalize_poly_effect_context_structure eff
     end;
   if label.lbl_private = Private then
     if create then
@@ -5831,28 +5853,32 @@ and type_label_exp create env (expected_mode : expected_mode) loc ty_expected
       if (vars = []) then arg, eff'
       else begin
           lower_current_eff arg.exp_loc env eff';
-          if maybe_expansive arg then
+          if maybe_expansive arg then begin
             lower_contravariant env arg.exp_type;
+            lower_delayed_eff arg.exp_loc env arg.exp_eff
+          end;
           generalize_and_check_univars env "field value" arg label.lbl_arg vars eff;
           {arg with exp_type = instance arg.exp_type}, eff'
         end
     with exn when maybe_expansive arg -> try
-                                          (* Try to retype without propagating ty_arg, cf PR#4862 *)
-                                          Option.iter Btype.backtrack snap;
-                                          begin_def ();
-                                          let arg = type_exp env arg_mode sarg in
-                                          let eff' = poly_eff env arg eff in
-                                          end_def ();
-                                          lower_current_eff arg.exp_loc env eff';
-                                          lower_contravariant env arg.exp_type;
-                                          begin_def ();
-                                          let arg = {arg with exp_type = instance arg.exp_type} in
-                                          unify_exp env arg (instance ty_arg);
-                                          end_def ();
-                                          generalize_and_check_univars env "field value" arg label.lbl_arg vars eff;
-                                          {arg with exp_type = instance arg.exp_type}, eff'
-                                        with Error (_, _, Less_general _) as e -> raise e
-                                           | _ -> raise exn    (* In case of failure return the first error *)
+      (* Try to retype without propagating ty_arg, cf PR#4862 *)
+      Option.iter Btype.backtrack snap;
+      begin_def ();
+      let arg = type_exp env arg_mode sarg in
+      let eff' = poly_eff env arg eff in
+      end_def ();
+      lower_current_eff arg.exp_loc env eff';
+      lower_contravariant env arg.exp_type;
+      lower_delayed_eff arg.exp_loc env arg.exp_eff;
+      begin_def ();
+      let arg = {arg with exp_type = instance arg.exp_type} in
+      unify_exp env arg (instance ty_arg);
+      end_def ();
+      generalize_and_check_univars env "field value" arg label.lbl_arg vars eff;
+      {arg with exp_type = instance arg.exp_type}, eff'
+     with
+     | Error (_, _, Less_general _) as e -> raise e
+     | _ -> raise exn    (* In case of failure return the first error *)
   in
   (lid, label, arg, eff)
 
@@ -6033,7 +6059,8 @@ and type_apply_arg env ~app_loc ~funct ~index ~position ~partial_app (lbl, arg) 
             let vars, ty_arg', eff = instance_poly false vars ty_arg' eff in
             if separate then begin
                 end_def ();
-                generalize_poly_scheme_structure ty_arg' eff;
+                generalize_structure ty_arg';
+                generalize_poly_effect_context_structure eff;
               end;
             let ty_arg0', vars0, eff0 = get_poly ty_arg0 in
             let vars0, ty_arg0', _ =
@@ -6046,8 +6073,10 @@ and type_apply_arg env ~app_loc ~funct ~index ~position ~partial_app (lbl, arg) 
             let eff = instance_poly_effect_context eff in
             let eff' = poly_eff env arg eff in
             end_def ();
-            if maybe_expansive arg then
+            if maybe_expansive arg then begin
               lower_contravariant env arg.exp_type;
+              lower_delayed_eff arg.exp_loc env arg.exp_eff;
+            end;
             lower_current_eff arg.exp_loc env eff';
             generalize_and_check_univars env "argument" arg ty_arg vars eff;
             {arg with exp_type = instance arg.exp_type; exp_eff = eff' }
@@ -6365,7 +6394,8 @@ and type_cases
           instance_expr_scheme ?partial:take_partial_instance ty_arg eff_arg
         in
         end_def ();
-        generalize_expr_scheme_structure ty_arg eff_arg;
+        generalize_structure ty_arg;
+        generalize_delayed_effect_context eff_arg;
         let eff = effect_context_pat_of_delayed eff_arg in
         let (pat, ext_env, force, pvs, unpacks) =
           type_pattern category ~lev ~alloc_mode:pmode ~eff
@@ -6770,7 +6800,8 @@ and type_let
             let vars, ty, eff' = instance_poly ~keep_names:true true tl ty eff' in
             if !Clflags.principal then begin
               end_def ();
-              generalize_poly_scheme_structure ty eff'
+              generalize_structure ty;
+              generalize_poly_effect_context_structure eff'
             end;
             let exp =
               Builtin_attributes.warning_scope pvb_attributes (fun () ->
@@ -6827,8 +6858,10 @@ and type_let
   end_def();
   List.iter2
     (fun (_,_,pat,_) (exp, _) ->
-       if maybe_expansive exp then
+       if maybe_expansive exp then begin
          lower_contravariant env pat.pat_type;
+         lower_delayed_eff exp.exp_loc env exp.exp_eff
+       end;
        lower_current_eff exp.exp_loc env exp.exp_eff)
     pat_list exp_list;
   iter_pattern_variables_type generalize_pat_var_scheme pvs;
@@ -6847,8 +6880,10 @@ and type_let
             so we do it anyway. *)
          generalize exp.exp_type
        | Some (vars, eff) ->
-           if maybe_expansive exp then
+           if maybe_expansive exp then begin
              lower_contravariant env exp.exp_type;
+             lower_delayed_eff exp.exp_loc env exp.exp_eff
+           end;
            generalize_and_check_univars env "definition" exp expected_ty vars eff)
     pat_list exp_list;
   let l =
@@ -7120,9 +7155,15 @@ let type_expression env sexp =
   Typetexp.reset_type_variables();
   begin_def();
   let exp = type_exp env mode_global sexp in
+  subeffect_effs exp.exp_loc env
+    true exp.exp_eff.current empty_effect_context;
   end_def();
-  if maybe_expansive exp then lower_contravariant env exp.exp_type;
+  if maybe_expansive exp then begin
+    lower_contravariant env exp.exp_type;
+    lower_delayed_eff exp.exp_loc env exp.exp_eff
+  end;
   generalize exp.exp_type;
+  generalize_delayed_eff exp.exp_eff;
   match sexp.pexp_desc with
     Pexp_ident lid ->
       let loc = sexp.pexp_loc in

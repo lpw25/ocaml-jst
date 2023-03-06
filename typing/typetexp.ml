@@ -532,6 +532,11 @@ and transl_type_aux env policy mode styp =
       in
       let ty = newty (Tvariant row) in
       ctyp (Ttyp_variant (tfields, closed, present)) ty
+  | Ptyp_poly([], st) ->
+      let cty, eff = transl_type_and_effect_context env policy mode st in
+      let ty = cty.ctyp_type in
+      let ty' = newty (Tpoly(ty, [], eff)) in
+      ctyp (Ttyp_poly ([], cty)) ty'
   | Ptyp_poly(vars, st) ->
       let vars = List.map (fun v -> v.txt) vars in
       begin_def();
@@ -542,7 +547,8 @@ and transl_type_aux env policy mode styp =
       let ty = cty.ctyp_type in
       univars := old_univars;
       end_def();
-      generalize_poly_scheme ty eff;
+      generalize ty;
+      generalize_poly_effect_context eff;
       let ty_list =
         List.fold_left
           (fun tyl (name, ty1) ->
@@ -761,7 +767,8 @@ let transl_simple_type_univars env styp =
     new_variables;
   globalize_used_variables env false ();
   end_def ();
-  generalize_poly_scheme typ.ctyp_type eff;
+  generalize typ.ctyp_type;
+  generalize_poly_effect_context eff;
   let univs =
     List.fold_left
       (fun acc v ->
@@ -795,7 +802,8 @@ let transl_type_scheme env styp =
   begin_def();
   let typ, eff = transl_simple_type_scheme env false Alloc_mode.Global styp in
   end_def();
-  generalize_scheme typ.ctyp_type eff;
+  generalize typ.ctyp_type;
+  generalize_effect_context eff;
   typ, eff
 
 

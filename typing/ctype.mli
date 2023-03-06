@@ -199,13 +199,10 @@ val correct_levels: type_expr -> type_expr
 val limited_generalize: type_expr -> type_expr -> unit
         (* Only generalize some part of the type
            Make the remaining of the type non-generalizable *)
-val generalize_scheme : type_expr -> effect_context -> unit
-val generalize_scheme_structure : type_expr -> effect_context -> unit
-val generalize_expr_scheme_structure
-    : type_expr -> delayed_effect_context -> unit
-val generalize_poly_scheme : type_expr -> effect_context option -> unit
-val generalize_poly_scheme_structure :
-  type_expr -> effect_context option -> unit
+val generalize_effect_context: effect_context -> unit
+val generalize_effect_context_structure: effect_context -> unit
+val generalize_poly_effect_context: effect_context option -> unit
+val generalize_poly_effect_context_structure: effect_context option -> unit
 
 val fully_generic: type_expr -> bool
 

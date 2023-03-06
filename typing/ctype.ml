@@ -782,14 +782,12 @@ let generalize ty =
   simple_abbrevs := Mnil;
   generalize ty
 
-let generalize_scheme ty eff =
+let generalize_effect_context eff =
   simple_abbrevs := Mnil;
-  generalize ty;
   iter_effect_context generalize eff
 
-let generalize_poly_scheme ty eff =
+let generalize_poly_effect_context eff =
   simple_abbrevs := Mnil;
-  generalize ty;
   iter_effect_context_option generalize eff
 
 (* Generalize the structure and lower the variables *)
@@ -811,28 +809,15 @@ let rec generalize_structure var_level ty =
     end
   end
 
-let generalize_scheme_structure ty eff =
+let generalize_effect_context_structure eff =
   simple_abbrevs := Mnil;
   let level = !current_level in
-  generalize_structure level ty;
   iter_effect_context (generalize_structure level) eff
 
-let generalize_poly_scheme_structure ty eff =
+let generalize_poly_effect_context_structure eff =
   simple_abbrevs := Mnil;
   let level = !current_level in
-  generalize_structure level ty;
   iter_effect_context_option (generalize_structure level) eff
-
-let generalize_expr_scheme_structure ty delayed =
-  simple_abbrevs := Mnil;
-  let level = !current_level in
-  generalize_structure level ty;
-  match delayed with
-  | Single eff ->
-      iter_effect_context (generalize_structure level) eff
-  | Tuple(effs, eff) ->
-      List.iter (iter_effect_context (generalize_structure level)) effs;
-      iter_effect_context (generalize_structure level) eff      
 
 let generalize_structure ty =
   simple_abbrevs := Mnil;

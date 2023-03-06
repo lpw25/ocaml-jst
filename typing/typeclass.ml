@@ -1237,7 +1237,8 @@ and class_expr_aux cl_num val_env met_env scl =
                }
              in
              Ctype.end_def ();
-             Ctype.generalize_scheme ty eff;
+             Ctype.generalize ty;
+             Ctype.generalize_effect_context eff;
              let desc =
                {val_type = expr.exp_type; val_kind = Val_ivar (Immutable,
                                                                cl_num);
