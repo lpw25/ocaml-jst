@@ -238,6 +238,22 @@ let mkld_global_maybe gbl ld =
   | Nonlocal -> mkld_nonlocal ld
   | Nothing -> ld
 
+let effects_loc = mknoloc "extension.effects"
+
+let effect_expr (name, typ) = Exp.extension (mknoloc name, PTyp typ)
+
+let effects_attr effs =
+  let payload =
+    match effs with
+    | [] -> PStr []
+    | [eff] -> PStr[Str.eval (effect_expr eff)]
+    | effs -> PStr[Str.eval (Exp.tuple (List.map effect_expr effs))]
+  in
+  Attr.mk ~loc:Location.none effects_loc payload
+
+let mktyp_effects typ effs =
+  {typ with ptyp_attributes = effects_attr effs :: typ.ptyp_attributes}
+
 (* TODO define an abstraction boundary between locations-as-pairs
    and locations-as-Location.t; it should be clear when we move from
    one world to the other *)
@@ -1978,7 +1994,7 @@ method_:
           ghexp ~loc (Pexp_poly($8, Some $6)) in
         ($4, $3, Cfk_concrete ($1, poly_exp)), $2 }
   | override_flag attributes private_flag mkrhs(label) COLON TYPE lident_list
-    DOT core_type EQUAL seq_expr
+    DOT core_type_with_effs EQUAL seq_expr
       { let poly_exp_loc = ($startpos($7), $endpos($11)) in
         let poly_exp =
           let exp, poly =
@@ -2222,12 +2238,12 @@ pattern_var:
 label_let_pattern:
     x = label_var
       { x }
-  | x = label_var COLON cty = core_type
+  | x = label_var COLON cty = core_type_with_poly_effs
       { let lab, pat = x in
         lab,
         mkpat ~loc:$sloc (Ppat_constraint (pat, cty)) }
   | x = label_var COLON
-          cty = mktyp (vars = typevar_list DOT ty = core_type { Ptyp_poly(vars, ty) })
+          cty = mktyp (vars = typevar_list DOT ty = core_type_with_effs { Ptyp_poly(vars, ty) })
       { let lab, pat = x in
         lab,
         mkpat ~loc:$sloc (Ppat_constraint (pat, cty)) }
@@ -2239,7 +2255,7 @@ label_let_pattern:
 let_pattern:
     pattern
       { $1 }
-  | mkpat(pattern COLON core_type
+  | mkpat(pattern COLON core_type_with_poly_effs
       { Ppat_constraint($1, $3) })
       { $1 }
   | poly_pattern
@@ -2249,7 +2265,7 @@ let_pattern:
     mkpat(
       pat = pattern
       COLON
-      cty = mktyp(vars = typevar_list DOT ty = core_type
+      cty = mktyp(vars = typevar_list DOT ty = core_type_with_effs
               { Ptyp_poly(vars, ty) })
         { Ppat_constraint(pat, cty) })
       { $1 }
@@ -2576,7 +2592,7 @@ labeled_simple_expr:
 let_binding_body:
     let_ident strict_binding
       { ($1, $2) }
-  | optional_local let_ident type_constraint EQUAL seq_expr
+  | optional_local let_ident type_constraint_with_effs EQUAL seq_expr
       { let v = $2 in (* PR#7344 *)
         let t =
           match $3 with
@@ -2595,7 +2611,7 @@ let_binding_body:
             (wrap_exp_local_if $1 (mkexp_constraint ~loc:$sloc $5 $3))
         in
         (pat, exp) }
-  | optional_local let_ident COLON typevar_list DOT core_type EQUAL seq_expr
+  | optional_local let_ident COLON typevar_list DOT core_type_with_effs EQUAL seq_expr
       (* TODO: could replace [typevar_list DOT core_type]
                with [mktyp(poly(core_type))]
                and simplify the semantic action? *)
@@ -2608,7 +2624,7 @@ let_binding_body:
         in
         let exp = mkexp_local_if $1 ~loc:$sloc $8 in
         (pat, exp) }
-  | let_ident COLON TYPE lident_list DOT core_type EQUAL seq_expr
+  | let_ident COLON TYPE lident_list DOT core_type_with_effs EQUAL seq_expr
       { let exp, poly =
           wrap_type_annotation ~loc:$sloc $4 $6 $8 in
         let loc = ($startpos($1), $endpos($6)) in
@@ -2770,6 +2786,14 @@ record_expr_content:
 ;
 type_constraint:
     COLON core_type                             { (Some $2, None) }
+  | COLON core_type COLONGREATER core_type      { (Some $2, Some $4) }
+  | COLONGREATER core_type                      { (None, Some $2) }
+  | COLON error                                 { syntax_error() }
+  | COLONGREATER error                          { syntax_error() }
+;
+
+type_constraint_with_effs:
+    COLON core_type_with_effs                   { (Some $2, None) }
   | COLON core_type COLONGREATER core_type      { (Some $2, Some $4) }
   | COLONGREATER core_type                      { (None, Some $2) }
   | COLON error                                 { syntax_error() }
@@ -2968,7 +2992,7 @@ value_description:
   attrs1 = attributes
   id = mkrhs(val_ident)
   COLON
-  ty = core_type
+  ty = core_type_with_effs
   attrs2 = post_item_attributes
     { let attrs = attrs1 @ attrs2 in
       let loc = make_loc $sloc in
@@ -2985,7 +3009,7 @@ primitive_declaration:
   attrs1 = attributes
   id = mkrhs(val_ident)
   COLON
-  ty = core_type
+  ty = core_type_with_effs
   EQUAL
   prim = raw_string+
   attrs2 = post_item_attributes
@@ -3358,6 +3382,8 @@ with_type_binder:
 possibly_poly(X):
   X
     { $1 }
+| X LBRACKET effects RBRACKET
+    { mktyp ~loc:$sloc (Ptyp_poly([], (mktyp_effects $1 $3))) }
 | mktyp(poly(X))
     { $1 }
 ;
@@ -3373,6 +3399,20 @@ possibly_poly(X):
 (* -------------------------------------------------------------------------- *)
 
 (* Core language types. *)
+
+core_type_with_effs:
+    core_type
+      { $1 }
+  | core_type LBRACKET effects RBRACKET
+      { mktyp_effects $1 $3 }
+;
+
+core_type_with_poly_effs:
+    core_type
+      { $1 }
+  | core_type LBRACKET effects RBRACKET
+      { mktyp ~loc:$sloc (Ptyp_poly([], (mktyp_effects $1 $3))) }
+;
 
 (* A core type (core_type) is a core type without attributes (core_type_no_attr)
    followed with a list of attributes. *)
@@ -3459,10 +3499,17 @@ strict_function_type:
 ;
 %inline param_type:
   | mktyp(
-    LPAREN vars = typevar_list DOT ty = core_type RPAREN
+    LPAREN vars = typevar_list DOT ty = core_type_with_effs RPAREN
       { Ptyp_poly(vars, ty) }
     )
     { $1 }
+
+  | mktyp(
+    LPAREN ty = core_type LBRACKET eff = effects RBRACKET RPAREN
+      { Ptyp_poly([], mktyp_effects ty eff) }
+    )
+    { $1 }
+
   | ty = tuple_type
     { ty }
 ;
@@ -3629,6 +3676,15 @@ meth_list:
     LIDENT                                      { $1 }
 ;
 
+effect:
+  label COLON core_type
+    { ($1, $3) }
+;
+
+%inline effects:
+  separated_list(SEMI, effect)
+    { $1 }
+;
 /* Constants */
 
 constant:
@@ -3998,7 +4054,7 @@ item_extension:
 payload:
     structure { PStr $1 }
   | COLON signature { PSig $2 }
-  | COLON core_type { PTyp $2 }
+  | COLON core_type_with_effs { PTyp $2 }
   | QUESTION pattern { PPat ($2, None) }
   | QUESTION pattern WHEN seq_expr { PPat ($2, Some $4) }
 ;
