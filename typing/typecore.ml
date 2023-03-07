@@ -553,10 +553,14 @@ let join_mode_effs mode eff =
   Btype.Value_mode.join_effs mode delayed
 
 let unify_effect_context_opts loc env eff1 eff2 =
-  match unify_effect_context_option env eff1 eff2 with
-  | () -> ()
-  | exception Unify trace ->
-      raise (Error(loc, env, Effect_type_clash(trace, false)))
+  match eff1, eff2 with
+  | None, None -> ()
+  | None, Some _ | Some _, None -> assert false
+  | Some eff1, Some eff2 ->
+      match unify_effect_context env eff1 eff2 with
+      | () -> ()
+      | exception Unify trace ->
+          raise (Error(loc, env, Effect_type_clash(trace, false)))
 
 let subeffect_effs loc env is_current exp_eff eff =
   match Ctype.subeffect env exp_eff eff with

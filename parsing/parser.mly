@@ -2592,7 +2592,7 @@ labeled_simple_expr:
 let_binding_body:
     let_ident strict_binding
       { ($1, $2) }
-  | optional_local let_ident type_constraint_with_effs EQUAL seq_expr
+  | optional_local let_ident type_constraint EQUAL seq_expr
       { let v = $2 in (* PR#7344 *)
         let t =
           match $3 with
@@ -2610,6 +2610,17 @@ let_binding_body:
           mkexp_local_if $1 ~loc:$sloc
             (wrap_exp_local_if $1 (mkexp_constraint ~loc:$sloc $5 $3))
         in
+        (pat, exp) }
+  | optional_local let_ident COLON core_type LBRACKET effects RBRACKET EQUAL seq_expr
+      { let typloc = ($startpos($4), $endpos($7)) in
+        let patloc = ($startpos($2), $endpos($7)) in
+        let typ = mktyp_effects $4 $6 in
+        let pat =
+          mkpat_local_if $1
+            (ghpat ~loc:patloc
+               (Ppat_constraint($2, ghtyp ~loc:typloc (Ptyp_poly([],typ)))))
+        in
+        let exp = mkexp_local_if $1 ~loc:$sloc $9 in
         (pat, exp) }
   | optional_local let_ident COLON typevar_list DOT core_type_with_effs EQUAL seq_expr
       (* TODO: could replace [typevar_list DOT core_type]
@@ -2786,14 +2797,6 @@ record_expr_content:
 ;
 type_constraint:
     COLON core_type                             { (Some $2, None) }
-  | COLON core_type COLONGREATER core_type      { (Some $2, Some $4) }
-  | COLONGREATER core_type                      { (None, Some $2) }
-  | COLON error                                 { syntax_error() }
-  | COLONGREATER error                          { syntax_error() }
-;
-
-type_constraint_with_effs:
-    COLON core_type_with_effs                   { (Some $2, None) }
   | COLON core_type COLONGREATER core_type      { (Some $2, Some $4) }
   | COLONGREATER core_type                      { (None, Some $2) }
   | COLON error                                 { syntax_error() }

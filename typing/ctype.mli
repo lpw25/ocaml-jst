@@ -63,6 +63,11 @@ module Unification_trace: sig
     | Abstract_row of position
     | Self_cannot_be_closed
 
+  type eff =
+    | Missing_effect of position * string
+    | Different_effects of string * string
+    | No_effect of position
+
   type 'a elt =
     | Diff of 'a diff
     | Variant of variant
@@ -70,6 +75,9 @@ module Unification_trace: sig
     | Escape of {context: type_expr option; kind:'a escape}
     | Incompatible_fields of {name:string; diff: type_expr diff }
     | Rec_occur of type_expr * type_expr
+    | Incompatible_effects of {name:string; diff:type_expr diff }
+    | Eff of eff
+    | Effect_diff of effect_context diff
 
   type t = desc elt list
 
@@ -301,6 +309,8 @@ val unify_var: Env.t -> type_expr -> type_expr -> unit
 val unify_alloc_mode: alloc_mode -> alloc_mode -> unit
 val join_effect_contexts:
         Env.t -> effect_context -> effect_context -> effect_context
+val unify_effect_context:
+        Env.t -> effect_context -> effect_context -> unit
 val unify_effect_context_option:
         Env.t -> effect_context option -> effect_context option -> unit
 val subeffect : Env.t -> effect_context -> effect_context -> unit

@@ -275,8 +275,8 @@ let rec print_out_type_0 mode ppf =
         pr_vars sl
         (print_out_type_0 mode) ty
   | Otyp_effect_context(t, eff) ->
-      fprintf ppf "@[<1>%a [%a]@]"
-        (print_out_type_0 mode) t print_out_effect_context eff
+      fprintf ppf "@[<1>%a %a@]"
+        (print_out_type_0 Oam_local) t print_out_effect_context eff
   | ty ->
       print_out_type_1 mode ppf ty
 
@@ -446,12 +446,15 @@ and print_out_label ppf (name, mut_or_gbl, arg) =
     | Ogom_immutable -> ""
   in
   fprintf ppf "@[<2>%s%s :@ %a@];" flag name print_out_type arg
-and print_out_effect_context ppf = function
-  | [] -> ()
-  | [s, ty] -> fprintf ppf "%s:@ %a" s print_out_type ty 
-  | (s, ty) :: eff ->
-      fprintf ppf "%s:@ %a;@ %a"
-        s print_out_type ty print_out_effect_context eff
+and print_out_effect ppf (s, ty) =
+  fprintf ppf "%s:@ %a" s print_out_type ty 
+
+and print_out_effect_context ppf eff =
+  fprintf ppf "[%a]"
+    (print_list print_out_effect (fun ppf -> fprintf ppf ";@ "))
+    eff
+
+let out_effect_context = ref print_out_effect_context
 
 let out_label = ref print_out_label
 

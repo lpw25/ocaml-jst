@@ -593,6 +593,10 @@ and transl_poly_type env policy mode t =
 
 and transl_type_and_effect_context env policy mode styp =
   let eff = get_effect_context styp in
+  let mode =
+    if eff = None then mode
+    else Local
+  in
   let ty = transl_type env policy mode styp in
   let eff =
     match eff with

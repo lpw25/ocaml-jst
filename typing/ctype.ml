@@ -91,6 +91,11 @@ module Unification_trace = struct
     | Abstract_row of position
     | Self_cannot_be_closed
 
+  type eff =
+    | Missing_effect of position * string
+    | Different_effects of string * string
+    | No_effect of position
+
   type 'a elt =
     | Diff of 'a diff
     | Variant of variant
@@ -98,6 +103,9 @@ module Unification_trace = struct
     | Escape of {context:type_expr option; kind: 'a escape}
     | Incompatible_fields of {name:string; diff:type_expr diff }
     | Rec_occur of type_expr * type_expr
+    | Incompatible_effects of {name:string; diff:type_expr diff }
+    | Eff of eff
+    | Effect_diff of effect_context diff
 
   type t = desc elt list
   let short t = { t; expanded = None }
@@ -107,14 +115,15 @@ module Unification_trace = struct
     let expected = f r.expected in
     { got; expected}
   let diff got expected = Diff (map_diff short {got;expected})
+  let effect_diff got expected = Effect_diff {got;expected}
 
   let map_elt f = function
     | Diff x -> Diff (map_diff f x)
     | Escape {kind=Equation x; context} -> Escape {kind=Equation(f x); context}
     | Rec_occur (_,_)
     | Escape {kind=(Univ _ | Self|Constructor _ | Module_type _ ); _}
-    | Variant _ | Obj _
-    | Incompatible_fields _ as x -> x
+    | Variant _ | Obj _ | Eff _
+    | Incompatible_fields _ | Incompatible_effects _ | Effect_diff _ as x -> x
   let map f = List.map (map_elt f)
 
 
@@ -130,10 +139,16 @@ module Unification_trace = struct
     | Diff x -> Diff (swap_diff x)
     | Incompatible_fields {name;diff} ->
         Incompatible_fields { name; diff = swap_diff diff}
+    | Incompatible_effects {name;diff} ->
+        Incompatible_effects { name; diff = swap_diff diff}
     | Obj (Missing_field(pos,s)) -> Obj(Missing_field(swap_position pos,s))
     | Obj (Abstract_row pos) -> Obj(Abstract_row (swap_position pos))
     | Variant (Fixed_row(pos,k,f)) -> Variant (Fixed_row(swap_position pos,k,f))
     | Variant (No_tags(pos,f)) -> Variant (No_tags(swap_position pos,f))
+    | Eff (Missing_effect(pos, s)) -> Eff (Missing_effect(swap_position pos, s))
+    | Eff (Different_effects(s1, s2)) -> Eff (Different_effects(s2, s1))
+    | Eff (No_effect pos) -> Eff (No_effect (swap_position pos))
+    | Effect_diff x -> Effect_diff (swap_diff x)
     | x -> x
   let swap x = List.map swap_elt x
 
@@ -144,6 +159,8 @@ module Unification_trace = struct
   let rec_occur x y = Unify[Rec_occur(x, y)]
   let incompatible_fields name got expected =
     Incompatible_fields {name; diff={got; expected} }
+  let incompatible_effects name got expected =
+    Incompatible_effects {name; diff={got; expected}}
 
   let explain trace f =
     let rec explain = function
@@ -3063,15 +3080,27 @@ and unify_effect_context_option env eff1 eff2 =
   match eff1, eff2 with
   | None, None -> ()
   | Some eff1, Some eff2 -> unify_effect_context env eff1 eff2
-  | None, Some _ | Some _, None -> raise (Unify [])
+  | None, Some _ -> raise (Unify Trace.[Eff(No_effect First)])
+  | Some _, None -> raise (Unify Trace.[Eff(No_effect Second)])
 
 and unify_effect_context env eff1 eff2 =
-  if List.length eff1.effects <> List.length eff2.effects then
-    raise (Unify []);
+  let c = List.compare_lengths eff1.effects eff2.effects in
+  if c > 0 then begin
+    let missing, _ = List.nth eff1.effects (List.length eff2.effects) in
+    raise (Unify Trace.[Eff(Missing_effect (Second, missing))])
+  end;
+  if c < 0 then begin
+    let missing, _ = List.nth eff2.effects (List.length eff1.effects) in
+    raise (Unify Trace.[Eff(Missing_effect (First, missing))])
+  end;
   List.iter2
     (fun (n1, ty1) (n2, ty2) ->
-      if not (String.equal n1 n2) then raise (Unify []);
-      unify env ty1 ty2)
+      if not (String.equal n1 n2) then
+        raise (Unify Trace.[Eff (Different_effects(n1, n2))]);
+      match unify env ty1 ty2 with
+      | () -> ()
+      | exception Unify trace ->
+          raise (Unify (Trace.incompatible_effects n1 ty1 ty2 :: trace)))
     eff1.effects eff2.effects
 
 (* Build a fresh row variable for unification *)
@@ -3393,17 +3422,36 @@ let unify env ty1 ty2 =
 let join_effect_contexts env eff1 eff2 =
   let rec loop env effects1 effects2 =
     match effects1, effects2 with
-    | (n1, ty1) :: rest1, (n2, ty2) :: rest2 ->
-        if not (String.equal n1 n2) then raise (Unify []);
-        unify env ty1 ty2;
-        let rest = loop env rest1 rest2 in
-        (n1, ty1) :: rest
+    | (n1, ty1) :: rest1, (n2, ty2) :: rest2 -> begin
+        if not (String.equal n1 n2) then
+          raise (Unify Trace.[Eff (Different_effects(n1, n2))]);
+        match unify env ty1 ty2 with
+        | exception Unify trace ->
+            raise (Unify (Trace.incompatible_effects n1 ty1 ty2 :: trace))
+        | () ->
+            let rest = loop env rest1 rest2 in
+            (n1, ty1) :: rest
+      end
     | _ :: _, [] -> effects1
     | [], _ :: _ -> effects2
     | [], [] -> []
   in
-  let effects = loop env eff1.effects eff2.effects in
-  {effects}
+  match loop env eff1.effects eff2.effects with
+  | exception Unify trace ->
+      raise (Unify (Trace.effect_diff eff1 eff2 :: trace))
+  | effects -> {effects}
+
+let unify_effect_context env eff1 eff2 =
+  univar_pairs := [];
+  let snap = Btype.snapshot () in
+  let env = ref env in
+  try
+    unify_effect_context env eff1 eff2
+  with
+    Unify trace ->
+      let trace = Trace.effect_diff eff1 eff2 :: trace in
+      undo_compress snap;
+      raise (Unify (expand_trace !env trace))
 
 let unify_effect_context_option env eff1 eff2 =
   univar_pairs := [];
@@ -3420,11 +3468,15 @@ let subeffect env eff1 eff2 =
   let rec loop effects1 effects2 =
     match effects1, effects2 with
     | [], _ -> ()
-    | _ :: _, [] -> raise (Unify [])
+    | (n, _) :: _, [] ->
+        raise (Unify Trace.[Eff(Missing_effect (Second, n))])
     | (n1, ty1) :: rest1, (n2, ty2) :: rest2 ->
-        if not (String.equal n1 n2) then raise (Unify []);
-        unify env ty1 ty2;
-        loop rest1 rest2
+        if not (String.equal n1 n2) then
+          raise (Unify Trace.[Eff (Different_effects(n1, n2))]);
+        match unify env ty1 ty2 with
+        | exception Unify trace ->
+            raise (Unify (Trace.incompatible_effects n1 ty1 ty2 :: trace))
+        | () -> loop rest1 rest2
   in
   univar_pairs := [];
   let snap = Btype.snapshot () in
@@ -3433,9 +3485,9 @@ let subeffect env eff1 eff2 =
     loop eff1.effects eff2.effects
   with
     Unify trace ->
+      let trace = Trace.effect_diff eff1 eff2 :: trace in
       undo_compress snap;
-      raise (Unify (expand_trace !env trace))
-  
+      raise (Unify (expand_trace !env trace))  
 
 
 (**** Special cases of unification ****)
