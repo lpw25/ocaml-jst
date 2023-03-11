@@ -850,17 +850,32 @@ let instance_pattern_scheme
       instance ty, Unknown reff
   | Tuple(_, eff) -> instance_tuple_pattern_scheme ty eff
 
-let generalize_pat_var_scheme_structure ty (eff : effect_context_pat_var) =
-  generalize_structure ty;
+let rec generalize_effect_context_pat_var_structure
+          (eff : effect_context_pat_var) =
   match eff with
-  | Known eff -> generalize_effect_context_structure eff
-  | Unknown _ | Join _ -> ()
+  | Known eff | Unknown { contents = Some eff } ->
+      generalize_effect_context_structure eff
+  | Join(_, _, _, eff1, eff2) ->
+      generalize_effect_context_pat_var_structure eff1;
+      generalize_effect_context_pat_var_structure eff2
+  | Unknown { contents = None } -> ()
+
+let generalize_pat_var_scheme_structure ty eff =
+  generalize_structure ty;
+  generalize_effect_context_pat_var_structure eff
+
+let rec generalize_effect_context_pat_var (eff : effect_context_pat_var) =
+  match eff with
+  | Known eff | Unknown { contents = Some eff } ->
+      generalize_effect_context eff
+  | Join(_, _, _, eff1, eff2) ->
+      generalize_effect_context_pat_var eff1;
+      generalize_effect_context_pat_var eff2
+  | Unknown { contents = None } -> ()
 
 let generalize_pat_var_scheme ty (eff : effect_context_pat_var) =
   generalize ty;
-  match eff with
-  | Known eff -> generalize_effect_context eff
-  | Unknown _ | Join _ -> ()
+  generalize_effect_context_pat_var eff
 
 let instance_pat_var_scheme
           ty (eff : effect_context_pat_var) : _ * effect_context_pat_var =

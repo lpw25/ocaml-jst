@@ -578,6 +578,12 @@ let raw_type_expr ppf t =
   raw_type ppf t;
   visited := []; kind_vars := []
 
+let raw_type_scheme ppf (t, eff) =
+  visited := []; kind_vars := []; kind_count := 0;
+  fprintf ppf "@[<2>%a@ [%a]@]"
+    raw_type t raw_effect_context eff;
+  visited := []; kind_vars := []
+
 let () = Btype.print_raw := raw_type_expr
 
 (* Normalize paths *)
