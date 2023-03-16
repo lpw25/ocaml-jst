@@ -87,3 +87,75 @@ Line 17, characters 10-33:
 Error: This expresion has effects [state: int state]
        which escape the current region
 |}]
+
+let use_stateful (f : unit -> unit [state: int]) =
+  f ()
+[%%expect{|
+val use_stateful : (unit -> unit [state: int]) -> unit [state: int] = <fun>
+|}]
+
+let handle_int_state (f : unit -> unit [state: int state]) = ()
+[%%expect{|
+val handle_int_state : (unit -> unit [state: int state]) -> unit = <fun>
+|}]
+
+let without_state () =
+  handle_int_state (fun () -> set 8)
+[%%expect{|
+val without_state : unit -> unit = <fun>
+|}]
+
+let without_state () =
+  handle_int_state (fun () -> set 8.8)
+[%%expect{|
+Line 2, characters 19-38:
+2 |   handle_int_state (fun () -> set 8.8)
+                       ^^^^^^^^^^^^^^^^^^^
+Error: This expression has effect [state: float state]
+       but an expression was expected with effect [state: int state]
+       Types for effect state are incompatible
+|}]
+
+let handle_stat (f : unit -> unit [stat: _]) = ()
+[%%expect{|
+val handle_stat : (unit -> unit [stat: 'a]) -> unit = <fun>
+|}]
+
+let without_state () =
+  handle_stat (fun () -> set 8)
+[%%expect{|
+Line 2, characters 14-31:
+2 |   handle_stat (fun () -> set 8)
+                  ^^^^^^^^^^^^^^^^^
+Error: This expression has effect [state: int state]
+       but an expression was expected with effect [stat: 'a]
+       The first effect context has effect state
+       where the second has effect stat
+|}]
+
+type foo = { foo : unit -> unit [state : int state] }
+[%%expect{|
+type foo = { foo : unit -> unit [state: int state]; }
+|}]
+
+let bar { foo } = foo ()
+[%%expect{|
+val bar : foo -> unit [state: int state] = <fun>
+|}]
+
+let _ = { foo = fun () -> set 0 }
+[%%expect{|
+- : foo = {foo = <fun>}
+|}]
+
+let join p =
+  if p then set 0
+  else set 0.0
+[%%expect{|
+Line 3, characters 7-14:
+3 |   else set 0.0
+           ^^^^^^^
+Error: This expression performs effects [state: float state]
+       but the current effect context is [state: int state]
+       Types for effect state are incompatible
+|}]

@@ -2255,7 +2255,7 @@ label_let_pattern:
 let_pattern:
     pattern
       { $1 }
-  | mkpat(pattern COLON core_type_with_poly_effs
+  | mkpat(pattern COLON core_type
       { Ppat_constraint($1, $3) })
       { $1 }
   | poly_pattern
@@ -2267,6 +2267,14 @@ let_pattern:
       COLON
       cty = mktyp(vars = typevar_list DOT ty = core_type_with_effs
               { Ptyp_poly(vars, ty) })
+        { Ppat_constraint(pat, cty) })
+      { $1 }
+  | mkpat(
+      pat = pattern
+      COLON
+      cty = mktyp(ty = core_type LBRACKET eff = effects RBRACKET
+              { let ty = mktyp_effects ty eff in
+                Ptyp_poly([], ty) })
         { Ppat_constraint(pat, cty) })
       { $1 }
 ;

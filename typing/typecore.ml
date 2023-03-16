@@ -482,21 +482,22 @@ let generalize_delayed_effect_context eff =
 let generalize_delayed_eff eff =
   generalize_delayed_effect_context eff.delayed
 
-let join_expr_effs loc env is_current eff1 eff2 =
-  match Ctype.join_effect_contexts env eff1 eff2 with
+let join_expr_effs loc env is_current eff expected_eff =
+  match Ctype.join_effect_contexts env eff expected_eff with
   | exception Unify trace ->
       raise (Error(loc, env, Effect_type_clash(trace, is_current)))
   | current -> current
 
-let join_effs loc env eff1 eff2 =
-  let current = join_expr_effs loc env true eff1.current eff2.current in
-  match eff1.delayed, eff2.delayed with
-  | Tuple(effs1, eff1), Tuple(effs2, eff2)
+let join_effs loc env eff expected_eff =
+  let current = join_expr_effs loc env true eff.current expected_eff.current in
+  match eff.delayed, expected_eff.delayed with
+  | Tuple(effs1, eff), Tuple(effs2, expected_eff)
         when List.length effs1 = List.length effs2 ->
-      let eff = join_expr_effs loc env false eff1 eff2 in
+      let eff = join_expr_effs loc env false eff expected_eff in
       let effs =
         List.map2
-          (fun eff1 eff2 -> Ctype.join_effect_contexts env eff1 eff2)
+          (fun eff expected_eff ->
+            Ctype.join_effect_contexts env eff expected_eff)
           effs1 effs2
       in
       let delayed = Tuple(effs, eff) in
@@ -510,8 +511,9 @@ let join_effs loc env eff1 eff2 =
       in
       let delayed = Tuple(effs, eff) in
       { current; delayed }
-  | (Tuple(_, eff1), Tuple(_, eff2)) | (Single eff1, Single eff2) ->
-      let delayed = join_expr_effs loc env false eff1 eff2 in
+  | (Tuple(_, eff), Tuple(_, expected_eff))
+    | (Single eff, Single expected_eff) ->
+      let delayed = join_expr_effs loc env false eff expected_eff in
       let delayed = Single delayed in
       { current; delayed }
 
@@ -3042,7 +3044,7 @@ let type_omitted_parameters expected_mode env ty_ret mode_ret args =
              let exp_eff = expedite_eff exp.exp_loc env exp.exp_eff in
              let open_args = (mode, exp) :: open_args in
              let args = (lbl, arg) :: args in
-             let eff = join_effs exp.exp_loc env eff exp_eff in
+             let eff = join_effs exp.exp_loc env exp_eff eff in
              (ty_ret, mode_ret, open_args, closed_args, args, eff)
          | Omitted { mode_fun; ty_arg; mode_arg; level } ->
              let arrow_desc = (lbl, mode_arg, mode_ret) in
@@ -3880,7 +3882,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
         if rec_flag = Recursive then
           check_recursive_bindings env pat_exp_list
       in
-      let eff = join_effs loc env (current_eff eff) body.exp_eff in
+      let eff = join_effs body.exp_loc env body.exp_eff (current_eff eff) in
       re {
           exp_desc = Texp_let(rec_flag, pat_exp_list, body);
           exp_loc = loc; exp_extra = [];
@@ -4070,7 +4072,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
       let cases, partial, body_eff =
         type_cases Computation env arg_pat_mode expected_mode
           arg.exp_type arg_eff ty_expected_explained true loc caselist in
-      let eff = join_effs loc env eff body_eff in
+      let eff = join_effs loc env body_eff eff in
       re {
           exp_desc = Texp_match(arg, cases, partial);
           exp_loc = loc; exp_extra = [];
@@ -4089,7 +4091,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
       let cases, _, cases_eff =
         type_cases Value env arg_mode expected_mode
           Predef.type_exn arg_eff ty_expected_explained false loc caselist in
-      let eff = join_effs loc env body.exp_eff cases_eff in
+      let eff = join_effs loc env cases_eff body.exp_eff in
       re {
           exp_desc = Texp_try(body, cases);
           exp_loc = loc; exp_extra = [];
@@ -4333,7 +4335,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
       in
       let eff =
         List.fold_left
-          (fun acc (_, _, exp, eff) -> join_effs exp.exp_loc env acc eff)
+          (fun acc (_, _, exp, eff) -> join_effs exp.exp_loc env eff acc)
           eff lbl_exp_list
       in
       re {
@@ -4360,7 +4362,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
       let eff =
         match eff with
         | Some eff ->
-            join_effs loc env (global_eff record.exp_eff) (delayed_eff eff)
+            join_effs loc env (delayed_eff eff) (global_eff record.exp_eff)
         | None ->
             match label.lbl_global with
             | Global -> global_eff record.exp_eff
@@ -4388,7 +4390,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
         raise(Error(loc, env, Label_not_mutable lid.txt));
       let eff =
         join_effs newval.exp_loc env
-          (global_eff record.exp_eff) (global_eff eff)
+          (global_eff eff) (global_eff record.exp_eff)
       in
       rue {
           exp_desc = Texp_setfield(record, label_loc, label, newval);
@@ -4414,7 +4416,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
         List.fold_left
           (fun eff arg ->
             submode_effs arg.exp_loc env arg.exp_eff Alloc_mode.global;
-            join_effs arg.exp_loc env eff arg.exp_eff)
+            join_effs arg.exp_loc env arg.exp_eff eff)
           no_effect argl
       in
       re {
@@ -4436,7 +4438,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
           let ifso =
             type_expect env expected_mode sifso
               (mk_expected ~explanation:If_no_else_branch Predef.type_unit) in
-          let eff = join_effs ifso.exp_loc env eff ifso.exp_eff in
+          let eff = join_effs ifso.exp_loc env ifso.exp_eff eff in
           rue {
               exp_desc = Texp_ifthenelse(cond, ifso, None);
               exp_loc = loc; exp_extra = [];
@@ -4449,11 +4451,11 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
           let ifso =
             type_expect env expected_mode sifso ty_expected_explained
           in
-          let eff = join_effs ifso.exp_loc env eff ifso.exp_eff in
+          let eff = join_effs ifso.exp_loc env ifso.exp_eff eff in
           let ifnot =
             type_expect env expected_mode sifnot ty_expected_explained
           in
-          let eff = join_effs ifso.exp_loc env eff ifnot.exp_eff in
+          let eff = join_effs ifnot.exp_loc env ifnot.exp_eff eff in
           (* Keep sharing *)
           unify_exp env ifnot ifso.exp_type;
           re {
@@ -4470,7 +4472,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
                    env sexp1 in
       let exp2 = type_expect env expected_mode sexp2 ty_expected_explained in
       let eff =
-        join_effs exp2.exp_loc env (global_eff exp1.exp_eff) exp2.exp_eff
+        join_effs exp2.exp_loc env exp2.exp_eff (global_eff exp1.exp_eff)
       in
       re {
           exp_desc = Texp_sequence(exp1, exp2);
@@ -4498,7 +4500,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
         type_statement ~explanation:While_loop_body body_env sbody
       in
       let body_eff = global_eff wh_body.exp_eff in
-      let eff = join_effs wh_body.exp_loc env cond_eff body_eff in      
+      let eff = join_effs wh_body.exp_loc env body_eff cond_eff in
       rue {
           exp_desc =
             Texp_while {wh_cond; wh_cond_region; wh_body; wh_body_region};
@@ -4519,7 +4521,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
           (mk_expected ~explanation:For_loop_stop_index Predef.type_int)
       in
       let eff =
-        join_effs for_to.exp_loc env eff (global_eff for_to.exp_eff)
+        join_effs for_to.exp_loc env (global_eff for_to.exp_eff) eff
       in
       let for_id, new_env =
         type_for_loop_index ~loc ~env ~param Predef.type_int
@@ -4532,7 +4534,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
         type_statement ~explanation:For_loop_body new_env sbody
       in
       let eff =
-        join_effs for_body.exp_loc env eff (global_eff for_body.exp_eff)
+        join_effs for_body.exp_loc env (global_eff for_body.exp_eff) eff
       in
       rue {
           exp_desc = Texp_for {for_id; for_pat = param; for_from; for_to;
@@ -4770,7 +4772,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
           let eff =
             match eff with
             | Some eff ->
-                join_effs loc env (global_eff obj.exp_eff) (delayed_eff eff)
+                join_effs loc env (delayed_eff eff) (global_eff obj.exp_eff)
             | None -> global_eff obj.exp_eff
           in
           rue {
@@ -4877,7 +4879,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
           let eff =
             List.fold_left
               (fun eff (_, _, newval) ->
-                join_effs newval.exp_loc env eff (global_eff newval.exp_eff))
+                join_effs newval.exp_loc env (global_eff newval.exp_eff) eff)
               no_effect modifs
           in
           rue {
@@ -6133,7 +6135,7 @@ and type_application env app_loc expected_mode position funct funct_mode sargs =
     let exp = type_expect env marg sarg (mk_expected ty_arg) in
     let funct_eff = expedite_eff funct.exp_loc env funct.exp_eff in
     let arg_eff = expedite_eff exp.exp_loc env exp.exp_eff in
-    let eff = join_effs exp.exp_loc env funct_eff arg_eff in
+    let eff = join_effs funct.exp_loc env funct_eff arg_eff in
     check_partial_application false exp;
     ([Nolabel, Arg exp], ty_res, position, eff)
   | _ ->
@@ -6173,7 +6175,7 @@ and type_application env app_loc expected_mode position funct funct_mode sargs =
         type_omitted_parameters expected_mode env
           ty_ret mode_ret args
       in
-      let eff = join_effs funct.exp_loc env eff funct_eff in
+      let eff = join_effs funct.exp_loc env funct_eff eff in
       submode ~loc:app_loc ~env
         (Value_mode.of_alloc mode_ret) expected_mode;
       args, ty_ret, position, eff
@@ -6267,7 +6269,7 @@ ty_expected_explained attrs =
   in
   let eff =
     List.fold_left
-      (fun eff arg -> join_effs arg.exp_loc env eff arg.exp_eff)
+      (fun eff arg -> join_effs arg.exp_loc env arg.exp_eff eff)
       no_effect args
   in
   if constr.cstr_private = Private then
@@ -6538,7 +6540,7 @@ and type_cases
   end;
   let eff =
     List.fold_left
-      (fun eff { c_rhs; _ } -> join_effs c_rhs.exp_loc env eff c_rhs.exp_eff)
+      (fun eff { c_rhs; _ } -> join_effs c_rhs.exp_loc env c_rhs.exp_eff eff)
       no_effect cases
   in
   let do_init = may_contain_gadts || needs_exhaust_check in
@@ -6993,7 +6995,7 @@ and type_andops env sarg sands expected_ty =
           type_expect env mode_global sexp (mk_expected ty_arg)
         in
         submode_effs exp.exp_loc env exp.exp_eff Alloc_mode.global;
-        let eff = join_effs exp.exp_loc env eff (global_eff exp.exp_eff) in
+        let eff = join_effs exp.exp_loc env (global_eff exp.exp_eff) eff in
         begin try
           unify env (instance ty_result) (instance expected_ty)
         with Unify trace ->
@@ -7040,7 +7042,7 @@ and type_andops env sarg sands expected_ty =
       type_comprehension_list ~loc ~env ~container_type ~comp_typell
     in
     let body = type_expect new_env mode_global sbody (mk_expected without_arr_ty) in
-    let eff = join_effs body.exp_loc new_env comp_eff body.exp_eff in
+    let eff = join_effs body.exp_loc new_env body.exp_eff comp_eff in
     re {
       exp_desc = build body comp_type;
       exp_loc = loc; exp_extra = [];
@@ -7063,7 +7065,7 @@ and type_andops env sarg sands expected_ty =
             type_expect env mode_global shigh
               (mk_expected ~explanation:For_loop_stop_index Predef.type_int)
           in
-          let eff = join_effs high.exp_loc env low.exp_eff high.exp_eff in
+          let eff = join_effs high.exp_loc env high.exp_eff low.exp_eff in
           let id, new_env =
             type_for_loop_index ~loc ~env:body_env ~param Predef.type_int
           in
@@ -7115,7 +7117,7 @@ and type_andops env sarg sands expected_ty =
             type_comprehension_clause ~body_env ~env ~loc
               ~container_type ~comp_type
           in
-          let new_eff = join_effs loc env eff new_eff in
+          let new_eff = join_effs loc env new_eff eff in
           comp::comps, new_env, new_eff)
         clauses
         ([], env, no_effect)
@@ -7128,7 +7130,7 @@ and type_andops env sarg sands expected_ty =
             type_expect new_env mode_global guard
               (mk_expected ~explanation:When_guard Predef.type_bool)
           in
-          let new_eff = join_effs exp.exp_loc new_env new_eff exp.exp_eff in
+          let new_eff = join_effs exp.exp_loc new_env exp.exp_eff new_eff in
           Some exp, new_eff
     in
     {clauses=new_comps; guard=new_guard}, new_env, new_eff
@@ -7140,7 +7142,7 @@ and type_andops env sarg sands expected_ty =
             type_comprehension_block
               ~env ~loc ~comp ~container_type
           in
-          let new_eff = join_effs loc env eff new_eff in
+          let new_eff = join_effs loc env new_eff eff in
           new_comps::comps, new_env, new_eff
       )
       comp_typell ([], env, no_effect)
