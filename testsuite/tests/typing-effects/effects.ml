@@ -159,3 +159,85 @@ Error: This expression performs effects [state: float state]
        but the current effect context is [state: int state]
        Types for effect state are incompatible
 |}]
+
+let tuple_test1 p =
+  let x, y =
+    if p then set, (fun _ -> ())
+    else set, (fun _ -> ())
+  in
+  y
+[%%expect{|
+val tuple_test1 : bool -> 'a -> unit = <fun>
+|}]
+
+let tuple_test2 p =
+  let x, y =
+    if p then set, (fun _ -> ())
+    else set, (fun _ -> ())
+  in
+  x
+[%%expect{|
+val tuple_test2 : bool -> 'a -> unit [state: 'b state] = <fun>
+|}]
+
+let fail msg = perform_ fail msg
+[%%expect{|
+val fail : 'a -> 'b [fail: 'a] = <fun>
+|}]
+
+let handle_bad (local_ f) =
+  match f () with
+  | x -> x
+  | effect_ fail msg -> String.length msg
+[%%expect{|
+Line 2, characters 8-9:
+2 |   match f () with
+            ^
+Error: The value f is local, so cannot be used inside a closure that might escape
+|}]
+
+let handle (f : unit -> int [fail: string]) =
+  match f () with
+  | x -> x
+  | effect_ fail msg -> String.length msg
+let five = handle (fun () -> fail "hello")
+[%%expect{|
+val handle : (unit -> int [fail: string]) -> int = <fun>
+val five : int = 5
+|}]
+
+let handle_or1 (f : unit -> int [fail: int]) =
+  match f () with
+  | x | effect_ fail x -> x + 2
+let seven = handle_or1 (fun () -> fail 5)
+let eight = handle_or1 (fun () -> 6)
+[%%expect{|
+val handle_or1 : (unit -> int [fail: int]) -> int = <fun>
+val seven : int = 7
+val eight : int = 8
+|}]
+
+let handle_or2 (f : unit -> int [fail: string]) =
+  match f () with
+  | x -> "hello"
+  | effect_ fail s | exception (Failure s) -> s ^ "!"
+let eff = handle_or2 (fun () -> fail "eff")
+let exn = handle_or2 (fun () -> failwith "exn")
+[%%expect{|
+val handle_or2 : (unit -> int [fail: string]) -> string = <fun>
+val eff : string = "eff!"
+val exn : string = "exn!"
+|}]
+
+let handle_or3 (f : unit -> string [fail: string]) =
+  match f () with
+  | s | effect_ fail s | exception (Failure s) -> s ^ "?"
+let a = handle_or3 (fun () -> "a")
+let b = handle_or3 (fun () -> fail "b")
+let c = handle_or3 (fun () -> failwith "c")
+[%%expect{|
+val handle_or3 : (unit -> string [fail: string]) -> string = <fun>
+val a : string = "a?"
+val b : string = "b?"
+val c : string = "c?"
+|}]

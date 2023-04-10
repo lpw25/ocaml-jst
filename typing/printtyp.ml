@@ -1215,7 +1215,7 @@ let type_scheme_max ?(b_reset_names=true) ppf ty =
 
 let tree_of_type_scheme ty eff =
   reset_and_mark_loops ty;
-  reset_and_mark_effect_context eff;
+  mark_effect_context eff;
   tree_of_type_and_effect_context true ty eff
 
 (* Print one type declaration *)
