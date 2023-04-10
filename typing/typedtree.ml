@@ -79,6 +79,7 @@ and 'k pattern_desc =
   (* computation patterns *)
   | Tpat_value : tpat_value_argument -> computation pattern_desc
   | Tpat_exception : value general_pattern -> computation pattern_desc
+  | Tpat_effect : string * value general_pattern -> computation pattern_desc
   (* generic constructions *)
   | Tpat_or :
       'k general_pattern * 'k general_pattern * row_desc option ->
@@ -175,6 +176,7 @@ and expression_desc =
   | Texp_open of open_declaration * expression
   | Texp_probe of { name:string; handler:expression; }
   | Texp_probe_is_enabled of { name:string }
+  | Texp_perform of string * expression
 
 and ident_kind = Id_value | Id_prim of Types.alloc_mode option
 
@@ -706,6 +708,7 @@ let rec classify_pattern_desc : type k . k pattern_desc -> k pattern_category =
 
   | Tpat_value _ -> Computation
   | Tpat_exception _ -> Computation
+  | Tpat_effect _ -> Computation
 
   | Tpat_or(p1, p2, _) ->
      begin match classify_pattern p1, classify_pattern p2 with
@@ -736,6 +739,7 @@ let shallow_iter_pattern_desc
   | Tpat_constant _ -> ()
   | Tpat_value p -> f.f p
   | Tpat_exception p -> f.f p
+  | Tpat_effect(_, p) -> f.f p
   | Tpat_or(p1, p2, _) -> f.f p1; f.f p2
 
 type pattern_transformation =
@@ -762,6 +766,7 @@ let shallow_map_pattern_desc
   | Tpat_variant (_,None,_) -> d
   | Tpat_value p -> Tpat_value (f.f p)
   | Tpat_exception p -> Tpat_exception (f.f p)
+  | Tpat_effect(s, p) -> Tpat_effect (s, f.f p)
   | Tpat_or (p1,p2,path) ->
       Tpat_or (f.f p1, f.f p2, path)
 
@@ -885,6 +890,7 @@ let mkloc = Location.mkloc
 let mknoloc = Location.mknoloc
 
 let split_pattern pat =
+  let module String = Misc.Stdlib.String in
   let combine_opts merge p1 p2 =
     match p1, p2 with
     | None, None -> None
@@ -894,6 +900,9 @@ let split_pattern pat =
     | Some p1, Some p2 ->
         Some (merge p1 p2)
   in
+  let combine_map merge p1 p2 =
+    String.Map.union (fun _ p1 p2 -> Some (merge p1 p2)) p1 p2
+  in
   let into pat p1 p2 =
     (* The third parameter of [Tpat_or] is [Some _] only for "#typ"
        patterns, which we do *not* expand. Hence we can put [None] here. *)
@@ -901,15 +910,18 @@ let split_pattern pat =
   let rec split_pattern cpat =
     match cpat.pat_desc with
     | Tpat_value p ->
-        Some p, None
+        Some p, None, String.Map.empty
     | Tpat_exception p ->
-        None, Some p
+        None, Some p, String.Map.empty
+    | Tpat_effect(s, p) ->
+        None, None, String.Map.singleton s p
     | Tpat_or (cp1, cp2, _) ->
-        let vals1, exns1 = split_pattern cp1 in
-        let vals2, exns2 = split_pattern cp2 in
+        let vals1, exns1, effs1 = split_pattern cp1 in
+        let vals2, exns2, effs2 = split_pattern cp2 in
         combine_opts (into cpat) vals1 vals2,
         (* We could change the pattern type for exception patterns to
            [Predef.exn], but it doesn't really matter. *)
-        combine_opts (into cpat) exns1 exns2
+        combine_opts (into cpat) exns1 exns2,
+        combine_map (into cpat) effs1 effs2
   in
   split_pattern pat

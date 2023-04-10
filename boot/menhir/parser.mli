@@ -34,6 +34,7 @@ type token =
   | PLUSEQ
   | PLUSDOT
   | PLUS
+  | PERFORM
   | PERCENT
   | OR
   | OPTLABEL of (string)
@@ -100,6 +101,7 @@ type token =
   | EOF
   | END
   | ELSE
+  | EFFECT
   | DOWNTO
   | DOTOP of (string)
   | DOTDOT

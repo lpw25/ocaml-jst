@@ -100,11 +100,15 @@ val proxy: type_expr -> type_expr
 
 val empty_effect_context : effect_context
 val is_empty_effect_context : effect_context -> bool
+val hd_effect_context : effect_context -> string * type_expr
+val tl_effect_context : effect_context -> effect_context
 
 val effect_context_of_delayed_effect_context :
   delayed_effect_context -> effect_context
 
 val no_effect : expr_effect_context
+
+val single_effect : string -> type_expr -> expr_effect_context
 
 val delayed_eff : effect_context -> expr_effect_context
 

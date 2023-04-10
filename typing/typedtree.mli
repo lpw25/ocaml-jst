@@ -138,6 +138,7 @@ and 'k pattern_desc =
          *)
   | Tpat_exception : value general_pattern -> computation pattern_desc
         (** exception P *)
+  | Tpat_effect : string * value general_pattern -> computation pattern_desc
   (* generic constructions *)
   | Tpat_or :
       'k general_pattern * 'k general_pattern * Types.row_desc option ->
@@ -305,6 +306,7 @@ and expression_desc =
         (** let open[!] M in e *)
   | Texp_probe of { name:string; handler:expression; }
   | Texp_probe_is_enabled of { name:string }
+  | Texp_perform of string * expression
 
 and ident_kind = Id_value | Id_prim of Types.alloc_mode option
 
@@ -866,6 +868,7 @@ val pat_bound_idents: 'k general_pattern -> Ident.t list
 val pat_bound_idents_full:
   'k general_pattern -> (Ident.t * string loc * Types.type_expr) list
 
-(** Splits an or pattern into its value (left) and exception (right) parts. *)
+(** Splits an or pattern into its value (left), exception (right) parts. *)
 val split_pattern:
-  computation general_pattern -> pattern option * pattern option
+  computation general_pattern ->
+  pattern option * pattern option * pattern Misc.Stdlib.String.Map.t

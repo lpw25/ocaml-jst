@@ -208,7 +208,8 @@ let classify_expression : Typedtree.expression -> sd =
     | Texp_assert _
     | Texp_try _
     | Texp_override _
-    | Texp_letop _ ->
+    | Texp_letop _
+    | Texp_perform _ ->
         Dynamic
   and classify_value_bindings rec_flag env bindings =
     (* We use a non-recursive classification, classifying each
@@ -848,6 +849,8 @@ let rec expression : Typedtree.expression -> term_judg =
     | Texp_probe {handler} ->
       expression handler << Dereference
     | Texp_probe_is_enabled _ -> empty
+    | Texp_perform(_, e) ->
+      expression e << Dereference
 
 and comprehension comp_types=
   List.concat_map (fun {clauses; guard}  ->
@@ -1254,6 +1257,7 @@ and is_destructuring_pattern : type k . k general_pattern -> bool =
     | Tpat_lazy _ -> true
     | Tpat_value pat -> is_destructuring_pattern (pat :> pattern)
     | Tpat_exception _ -> false
+    | Tpat_effect _ -> false
     | Tpat_or (l,r,_) ->
         is_destructuring_pattern l || is_destructuring_pattern r
 

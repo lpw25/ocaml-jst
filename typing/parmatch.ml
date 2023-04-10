@@ -1832,19 +1832,33 @@ let pressure_variants tdefs patl =
             (List.map (fun p -> [p; omega]) patl))
 
 let pressure_variants_in_computation_pattern tdefs patl =
+  let module String = Misc.Stdlib.String in
   let add_row pss p_opt =
     match p_opt with
     | None -> pss
     | Some p -> p :: pss
   in
-  let val_pss, exn_pss =
-    List.fold_right (fun pat (vpss, epss)->
-      let (vp, ep) = split_pattern pat in
-      add_row vpss vp, add_row epss ep
-    ) patl ([], [])
+  let add_row_map pss_map p_map =
+    String.Map.fold
+      (fun name p pss_map->
+        let pss =
+          match String.Map.find_opt name pss_map with
+          | None -> []
+          | Some prev -> prev
+        in
+        let pss = p :: pss in
+        String.Map.add name pss pss_map)
+      p_map pss_map
+  in
+  let val_pss, exn_pss, eff_pss =
+    List.fold_right (fun pat (vpss, epss, fpss)->
+      let (vp, ep, fp) = split_pattern pat in
+      add_row vpss vp, add_row epss ep, add_row_map fpss fp
+    ) patl ([], [], String.Map.empty)
   in
   pressure_variants tdefs val_pss;
-  pressure_variants tdefs exn_pss
+  pressure_variants tdefs exn_pss;
+  String.Map.iter (fun _ pss -> pressure_variants tdefs pss) eff_pss
 
 (*****************************)
 (* Utilities for diagnostics *)

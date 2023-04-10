@@ -263,6 +263,9 @@ and pattern : type k . _ -> _ -> k general_pattern -> unit = fun i ppf x ->
   | Tpat_exception p ->
       line i ppf "Tpat_exception\n";
       pattern i ppf p;
+  | Tpat_effect(n, p) ->
+      line i ppf "Tpat_effect \"%s\"\n" n;
+      pattern i ppf p;
   | Tpat_value p ->
       line i ppf "Tpat_value\n";
       pattern i ppf (p :> pattern);
@@ -480,6 +483,9 @@ and expression i ppf x =
       expression i ppf handler;
   | Texp_probe_is_enabled {name} ->
       line i ppf "Texp_probe_is_enabled \"%s\"\n" name;
+  | Texp_perform(n, e) ->
+      line i ppf "Texp_perform \"%s\"\n" n;
+      expression i ppf e
 
 and value_description i ppf x =
   line i ppf "value_description %a %a\n" fmt_ident x.val_id fmt_location

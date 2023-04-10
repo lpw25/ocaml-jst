@@ -466,3 +466,24 @@ let get_effect_context attr =
       else
         Ok (Some (effect_context_of_payload attr.attr_payload))
 
+let effect_name_of_payload payload =
+  match payload with
+  | PStr [{pstr_desc=Pstr_eval({pexp_desc=
+      Pexp_constant (Pconst_string(name, _, None))}, [])}] ->
+      if not (Clflags.Extension.is_enabled Effects) then
+        Error `Disabled
+      else
+        Ok name
+  | _ -> Error `Payload
+
+let has_effect attrs =
+  List.exists (check ["extension.effect"]) attrs
+
+let get_effect attrs =
+  match List.find_opt (check ["extension.effect"]) attrs with
+  | Some attr -> begin
+      match effect_name_of_payload attr.attr_payload with
+      | Ok name -> Ok (Some name)
+      | Error _ as err -> err
+    end
+  | None -> Ok None

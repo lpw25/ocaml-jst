@@ -24,6 +24,7 @@ open Typedtree
 open Typeopt
 open Lambda
 open Debuginfo.Scoped_location
+module String = Misc.Stdlib.String
 
 type error =
     Free_super_var
@@ -93,6 +94,15 @@ let extract_constant = function
 let extract_float = function
     Const_base(Const_float f) -> f
   | _ -> fatal_error "Translcore.extract_float"
+
+let is_eff_map_singleton map =
+  let s = String.Map.to_seq map in
+  match s () with
+  | Nil -> false
+  | Cons(_, s) ->
+      match s () with
+      | Nil -> true
+      | Cons _ -> false
 
 let transl_alloc_mode alloc_mode =
   match Btype.Alloc_mode.constrain_lower alloc_mode with
@@ -421,7 +431,7 @@ and transl_exp0 ~in_new_scope ~scopes e =
       let k = Typeopt.value_kind e.exp_env e.exp_type in
       Ltrywith(transl_exp ~scopes body, id,
                Matching.for_trywith ~scopes k e.exp_loc (Lvar id)
-                 (transl_cases_try ~scopes pat_expr_list),
+                 (transl_cases_try ~scopes pat_expr_list) String.Map.empty,
                Typeopt.value_kind e.exp_env e.exp_type)
   | Texp_tuple el ->
       let ll, shape = transl_list_with_shape ~scopes el in
@@ -867,6 +877,15 @@ and transl_exp0 ~in_new_scope ~scopes e =
       Lprim(Pprobe_is_enabled {name}, [], of_location ~scopes e.exp_loc)
     else
       lambda_unit
+  | Texp_perform(name, arg) ->
+      let tag = Btype.hash_variant name in
+      let loc = of_location ~scopes e.exp_loc in
+      let arg = transl_exp ~scopes arg in
+      let block =
+        Lprim(Pmakeblock(1, Mutable, None, alloc_heap),
+              [Lconst(const_int tag); Lconst(const_int 0); arg], loc)
+      in
+      Lprim(Praise Raise_notrace, [block], loc)
 
 and pure_module m =
   match m.mod_desc with
@@ -893,25 +912,27 @@ and transl_guard ~scopes guard rhs =
       event_before ~scopes cond
         (Lifthenelse(transl_exp ~scopes cond, expr, staticfail, kind))
 
-and transl_case ~scopes {c_lhs; c_guard; c_rhs} =
-  c_lhs, transl_guard ~scopes c_guard c_rhs
+and transl_guard_try ~scopes {c_lhs; c_guard; c_rhs} =
+  iter_exn_names Translprim.add_exception_ident c_lhs;
+  Misc.try_finally
+    (fun () -> transl_guard ~scopes c_guard c_rhs)
+    ~always:(fun () ->
+        iter_exn_names Translprim.remove_exception_ident c_lhs)
 
 and transl_cases ~scopes cases =
   let cases =
-    List.filter (fun c -> c.c_rhs.exp_desc <> Texp_unreachable) cases in
-  List.map (transl_case ~scopes) cases
-
-and transl_case_try ~scopes {c_lhs; c_guard; c_rhs} =
-  iter_exn_names Translprim.add_exception_ident c_lhs;
-  Misc.try_finally
-    (fun () -> c_lhs, transl_guard ~scopes c_guard c_rhs)
-    ~always:(fun () ->
-        iter_exn_names Translprim.remove_exception_ident c_lhs)
+    List.filter (fun c -> c.c_rhs.exp_desc <> Texp_unreachable) cases
+  in
+  List.map
+    (fun {c_lhs; c_guard; c_rhs} -> c_lhs, transl_guard ~scopes c_guard c_rhs)
+    cases
 
 and transl_cases_try ~scopes cases =
   let cases =
     List.filter (fun c -> c.c_rhs.exp_desc <> Texp_unreachable) cases in
-  List.map (transl_case_try ~scopes) cases
+  List.map
+    (fun ({c_lhs; _} as c) -> c_lhs, transl_guard_try ~scopes c)
+    cases
 
 and transl_tupled_cases ~scopes patl_expr_list =
   let patl_expr_list =
@@ -1369,72 +1390,111 @@ and transl_record ~scopes loc env mode fields repres opt_init_expr =
 
 and transl_match ~scopes e arg pat_expr_list partial =
   let kind = Typeopt.value_kind e.exp_env e.exp_type in
-  let rewrite_case (val_cases, exn_cases, static_handlers as acc)
-        ({ c_lhs; c_guard; c_rhs } as case) =
+  let rewrite_case (val_cases, exn_cases, eff_cases, static_handlers as acc)
+        { c_lhs; c_guard; c_rhs } =
     if c_rhs.exp_desc = Texp_unreachable then acc else
-    let val_pat, exn_pat = split_pattern c_lhs in
-    match val_pat, exn_pat with
-    | None, None -> assert false
-    | Some pv, None ->
-        let val_case =
-          transl_case ~scopes { case with c_lhs = pv }
-        in
-        val_case :: val_cases, exn_cases, static_handlers
-    | None, Some pe ->
-        let exn_case = transl_case_try ~scopes { case with c_lhs = pe } in
-        val_cases, exn_case :: exn_cases, static_handlers
-    | Some pv, Some pe ->
+    let val_pat, exn_pat, eff_pats = split_pattern c_lhs in
+    let has_single_case =
+      match val_pat, exn_pat with
+      | None, None -> is_eff_map_singleton eff_pats
+      | Some _, None | None, Some _ -> String.Map.is_empty eff_pats
+      | Some _, Some _ -> false
+    in
+    let mk_case, static_handlers =
+      if has_single_case then begin
+        let case = transl_guard ~scopes c_guard c_rhs in
+        let mk_case p = p, case in
+        mk_case, static_handlers
+      end else begin
         assert (c_guard = None);
         let lbl  = next_raise_count () in
-        let static_raise ids =
-          Lstaticraise (lbl, List.map (fun id -> Lvar id) ids)
-        in
         (* Simplif doesn't like it if binders are not uniq, so we make sure to
            use different names in the value and the exception branches. *)
-        let ids_full = Typedtree.pat_bound_idents_full pv in
+        let pat =
+          match val_pat with
+          | Some pat -> pat
+          | None ->
+              match exn_pat with
+              | Some pat -> pat
+              | None -> snd (String.Map.choose eff_pats)
+        in
+        let ids_full = Typedtree.pat_bound_idents_full pat in
         let ids = List.map (fun (id, _, _) -> id) ids_full in
         let ids_kinds =
-          List.map (fun (id, _, ty) -> id, Typeopt.value_kind pv.pat_env ty)
+          List.map (fun (id, _, ty) -> id, Typeopt.value_kind pat.pat_env ty)
             ids_full
         in
-        let vids = List.map Ident.rename ids in
-        let pv = alpha_pat (List.combine ids vids) pv in
+        let mk_case p =
+          let pids = List.map Ident.rename ids in
+          let p = alpha_pat (List.combine ids pids) p in 
+          p, Lstaticraise (lbl, List.map (fun id -> Lvar id) pids)
+        in
         (* Also register the names of the exception so Re-raise happens. *)
-        iter_exn_names Translprim.add_exception_ident pe;
+        Option.iter (iter_exn_names Translprim.add_exception_ident) exn_pat;
         let rhs =
           Misc.try_finally
             (fun () -> event_before ~scopes c_rhs
                          (transl_exp ~scopes c_rhs))
             ~always:(fun () ->
-                iter_exn_names Translprim.remove_exception_ident pe)
+                Option.iter
+                  (iter_exn_names Translprim.remove_exception_ident)
+                  exn_pat)
         in
-        (pv, static_raise vids) :: val_cases,
-        (pe, static_raise ids) :: exn_cases,
-        (lbl, ids_kinds, rhs) :: static_handlers
+        let static_handlers = (lbl, ids_kinds, rhs) :: static_handlers in
+        mk_case, static_handlers
+      end
+    in
+    let val_cases =
+      match val_pat with
+      | None -> val_cases
+      | Some pv -> mk_case pv :: val_cases
+    in
+    let exn_cases =
+      match exn_pat with
+      | None -> exn_cases
+      | Some pe -> mk_case pe :: exn_cases
+    in
+    let eff_cases =
+      String.Map.fold
+        (fun name pat acc ->
+           let cases =
+             Option.value ~default:[] (String.Map.find_opt name acc)
+           in
+           let cases = mk_case pat :: cases in
+           String.Map.add name cases acc)
+        eff_pats eff_cases
+    in
+    val_cases, exn_cases, eff_cases, static_handlers
   in
-  let val_cases, exn_cases, static_handlers =
-    let x, y, z = List.fold_left rewrite_case ([], [], []) pat_expr_list in
-    List.rev x, List.rev y, List.rev z
+  let val_cases, exn_cases, eff_cases, static_handlers =
+    let v, e, f, s =
+      List.fold_left rewrite_case ([], [], String.Map.empty, []) pat_expr_list
+    in
+    List.rev v, List.rev e, String.Map.map List.rev f, s
+  in
+  let has_exn_or_eff_cases =
+    exn_cases <> [] || not (String.Map.is_empty eff_cases)
   in
   let static_catch body val_ids handler =
     let id = Typecore.name_pattern "exn" (List.map fst exn_cases) in
     let static_exception_id = next_raise_count () in
     Lstaticcatch
       (Ltrywith (Lstaticraise (static_exception_id, body), id,
-                 Matching.for_trywith ~scopes kind e.exp_loc (Lvar id) exn_cases,
+                 Matching.for_trywith ~scopes kind e.exp_loc (Lvar id)
+                   exn_cases eff_cases,
                  kind),
        (static_exception_id, val_ids),
        handler,
       kind)
   in
   let classic =
-    match arg, exn_cases with
-    | {exp_desc = Texp_tuple argl}, [] ->
+    match arg, has_exn_or_eff_cases with
+    | {exp_desc = Texp_tuple argl}, false ->
       assert (static_handlers = []);
       let mode = transl_exp_mode arg in
       Matching.for_multiple_match ~scopes kind e.exp_loc
         (transl_list ~scopes argl) mode val_cases partial
-    | {exp_desc = Texp_tuple argl}, _ :: _ ->
+    | {exp_desc = Texp_tuple argl}, true ->
         let val_ids =
           List.map
             (fun arg ->
@@ -1448,11 +1508,11 @@ and transl_match ~scopes e arg pat_expr_list partial =
         static_catch (transl_list ~scopes argl) val_ids
           (Matching.for_multiple_match ~scopes kind e.exp_loc
              lvars mode val_cases partial)
-    | arg, [] ->
+    | arg, false ->
       assert (static_handlers = []);
       Matching.for_function ~scopes kind e.exp_loc
         None (transl_exp ~scopes arg) val_cases partial
-    | arg, _ :: _ ->
+    | arg, true ->
         let val_id = Typecore.name_pattern "val" (List.map fst val_cases) in
         let k = Typeopt.value_kind arg.exp_env arg.exp_type in
         static_catch [transl_exp ~scopes arg] [val_id, k]

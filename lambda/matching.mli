@@ -18,6 +18,7 @@
 open Typedtree
 open Lambda
 open Debuginfo.Scoped_location
+module String = Misc.Stdlib.String
 
 (* Entry points to match compiler *)
 val for_function:
@@ -27,6 +28,7 @@ val for_function:
 val for_trywith:
         scopes:scopes -> value_kind -> Location.t ->
         lambda -> (pattern * lambda) list ->
+        (pattern * lambda) list String.Map.t ->
         lambda
 val for_let:
         scopes:scopes -> Location.t ->

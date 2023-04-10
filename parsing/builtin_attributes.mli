@@ -105,3 +105,9 @@ val has_include_functor : Parsetree.attributes -> (bool,unit) result
 val get_effect_context :
   Parsetree.attributes
   -> ((string * Parsetree.core_type) list option, unit) result
+
+val has_effect : Parsetree.attributes -> bool
+val effect_name_of_payload :
+  Parsetree.payload -> (string, [`Disabled | `Payload]) result
+val get_effect :
+  Parsetree.attributes -> (string option, [`Disabled | `Payload]) result

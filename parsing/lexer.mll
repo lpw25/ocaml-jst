@@ -47,6 +47,7 @@ let keyword_table =
     "do", DO;
     "done", DONE;
     "downto", DOWNTO;
+    "effect_", EFFECT;
     "else", ELSE;
     "end", END;
     "exception", EXCEPTION;
@@ -77,6 +78,7 @@ let keyword_table =
     "open", OPEN;
     "or", OR;
 (*  "parser", PARSER; *)
+    "perform_", PERFORM;
     "private", PRIVATE;
     "rec", REC;
     "sig", SIG;

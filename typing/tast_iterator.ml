@@ -172,6 +172,7 @@ let pat
   | Tpat_lazy p -> sub.pat sub p
   | Tpat_value p -> sub.pat sub (p :> pattern)
   | Tpat_exception p -> sub.pat sub p
+  | Tpat_effect(_, p) -> sub.pat sub p
   | Tpat_or (p1, p2, _) ->
       sub.pat sub p1;
       sub.pat sub p2
@@ -275,7 +276,7 @@ let expr sub {exp_extra; exp_desc; exp_env; _} =
       sub.expr sub e
   | Texp_probe {handler;_} -> sub.expr sub handler
   | Texp_probe_is_enabled _ -> ()
-
+  | Texp_perform (_, exp) -> sub.expr sub exp
 
 let package_type sub {pack_fields; _} =
   List.iter (fun (_, p) -> sub.typ sub p) pack_fields

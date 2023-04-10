@@ -157,7 +157,6 @@ let mkuplus ~oploc name arg =
   | _ ->
       Pexp_apply(mkoperator ~loc:oploc ("~" ^ name), [Nolabel, arg])
 
-
 let local_ext_loc = mknoloc "extension.local"
 
 let local_attr =
@@ -237,6 +236,26 @@ let mkld_global_maybe gbl ld =
   | Global -> mkld_global ld
   | Nonlocal -> mkld_nonlocal ld
   | Nothing -> ld
+
+let effect_loc = mknoloc "extension.effect"
+
+let name_payload name =
+  [Str.eval (Exp.constant (Const.string name))]
+
+let effect_attr name =
+  Attr.mk ~loc:Location.none effect_loc (PStr (name_payload name))
+
+let mkpat_effect name pat =
+  {pat with ppat_attributes = effect_attr name :: pat.ppat_attributes}
+
+let perform_loc = mknoloc "extension.perform"
+
+let perform_extension name =
+  Exp.mk ~loc:Location.none
+    (Pexp_extension(perform_loc, PStr (name_payload name)))
+
+let mkexp_perform ~loc name exp =
+  ghexp ~loc (Pexp_apply(perform_extension name, [Nolabel, exp]))
 
 let effects_loc = mknoloc "extension.effects"
 
@@ -703,6 +722,7 @@ let mk_directive ~loc name arg =
 %token DOT
 %token DOTDOT
 %token DOWNTO
+%token EFFECT
 %token ELSE
 %token END
 %token EOF
@@ -769,6 +789,7 @@ let mk_directive ~loc name arg =
 %token OR
 /* %token PARSER */
 %token PERCENT
+%token PERFORM
 %token PLUS
 %token PLUSDOT
 %token PLUSEQ
@@ -2327,6 +2348,8 @@ expr:
      { not_expecting $loc($1) "wildcard \"_\"" }
   | LOCAL seq_expr
      { mkexp_stack ~loc:$sloc $2 }
+  | PERFORM LIDENT simple_expr
+     { mkexp_perform ~loc:$sloc $2 $3 }
 ;
 %inline expr_attrs:
   | LET MODULE ext_attributes mkrhs(module_name) module_binding_body IN seq_expr
@@ -2837,6 +2860,8 @@ pattern:
       { $1 }
   | EXCEPTION ext_attributes pattern %prec prec_constr_appl
       { mkpat_attrs ~loc:$sloc (Ppat_exception $3) $2}
+  | EFFECT ext_attributes LIDENT pattern %prec prec_constr_appl
+      { mkpat_effect $3 (mkpat_attrs ~loc:$sloc (Ppat_exception $4) $2) }
 ;
 
 pattern_no_exn:

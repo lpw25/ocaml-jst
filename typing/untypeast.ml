@@ -293,6 +293,15 @@ let pattern : type k . _ -> k T.general_pattern -> _ = fun sub pat ->
   let loc = sub.location sub pat.pat_loc in
   (* todo: fix attributes on extras *)
   let attrs = sub.attributes sub pat.pat_attributes in
+  let attrs =
+    match pat.pat_desc with
+    | Tpat_effect(n, _) ->
+        let str = mknoloc "extension.effect" in
+        let payload = [Str.eval (Exp.constant (Const.string n))] in
+        let attr = Attr.mk ~loc:Location.none str (PStr payload) in
+        attr :: attrs
+    | _ -> attrs
+  in
   let desc =
   match pat with
       { pat_extra=[Tpat_unpack, loc, _attrs]; pat_desc = Tpat_any; _ } ->
@@ -349,6 +358,7 @@ let pattern : type k . _ -> k T.general_pattern -> _ = fun sub pat ->
     | Tpat_lazy p -> Ppat_lazy (sub.pat sub p)
 
     | Tpat_exception p -> Ppat_exception (sub.pat sub p)
+    | Tpat_effect(_, p) -> Ppat_exception (sub.pat sub p)
     | Tpat_value p -> (sub.pat sub (p :> pattern)).ppat_desc
     | Tpat_or (p1, p2, _) -> Ppat_or (sub.pat sub p1, sub.pat sub p2)
   in
@@ -563,6 +573,13 @@ let expression sub exp =
                      , [])
                ; pstr_loc = loc
                }]))
+    | Texp_perform(n, e) ->
+        let payload = [Str.eval (Exp.constant (Const.string n))] in
+        let str = mknoloc "extension.perform" in
+        let ext =
+          Exp.mk ~loc:Location.none (Pexp_extension(str, PStr payload))
+        in
+        Pexp_apply(ext, [Nolabel, sub.expr sub e])
   in
   List.fold_right (exp_extra sub) exp.exp_extra
     (Exp.mk ~loc ~attrs desc)

@@ -97,6 +97,7 @@ open Printf
 open Printpat
 
 module Scoped_location = Debuginfo.Scoped_location
+module String = Misc.Stdlib.String
 
 let dbg = false
 
@@ -227,7 +228,11 @@ end = struct
       in
       match p.pat_desc with
       | `Any -> stop p `Any
-      | `Var (id, s) -> continue p (`Alias (Patterns.omega, id, s))
+      | `Var (id, _) ->
+          let k = Typeopt.value_kind p.pat_env p.pat_type in
+          aux
+            ( (General.view Patterns.omega, patl),
+               bind_with_value_kind Alias (id, k) arg action )
       | `Alias (p, id, _) ->
           let k = Typeopt.value_kind p.pat_env p.pat_type in
           aux
@@ -2126,6 +2131,8 @@ let rec split k xs =
 
 let zero_lam = Lconst (Const_base (Const_int 0))
 
+let one_lam = Lconst (Const_base (Const_int 1))
+
 let tree_way_test loc kind arg lt eq gt =
   Lifthenelse
     ( Lprim (Pintcomp Clt, [ arg; zero_lam ], loc),
@@ -3460,7 +3467,7 @@ let for_function ~scopes kind loc repr param pat_act_list partial =
     repr param pat_act_list partial
 
 (* In the following two cases, exhaustiveness info is not available! *)
-let for_trywith ~scopes value_kind loc param pat_act_list =
+let for_trywith_exns ~scopes value_kind loc param pat_act_list =
   (* Note: the failure action of [for_trywith] corresponds
      to an exception that is not matched by a try..with handler,
      and is thus reraised for the next handler in the stack.
@@ -3470,6 +3477,76 @@ let for_trywith ~scopes value_kind loc param pat_act_list =
      silent reraise in exception backtraces. *)
   compile_matching ~scopes value_kind loc ~failer:(Reraise_noloc param)
     None param pat_act_list Partial
+
+let for_trywith_effs ~scopes value_kind loc param eff_pat_acts =
+  let sloc = Scoped_location.of_location ~scopes loc in
+  let name_id = Ident.create_local "name" in
+  let name_def = Lprim (Pfield (0, Reads_agree), [param], sloc) in
+  let name_lam = Lvar name_id in
+  let depth_id = Ident.create_local "depth" in
+  let depth_def = Lprim (Pfield (1, Reads_vary), [param], sloc) in
+  let depth_lam = Lvar depth_id in
+  let arg_id = Ident.create_local "arg" in
+  let arg_def = Lprim (Pfield (2, Reads_agree), [param], sloc) in
+  let arg_lam = Lvar arg_id in
+  let int_lambda_list =
+    String.Map.fold
+      (fun name pat_act_list acc ->
+        let act =
+          compile_matching ~scopes value_kind loc
+            ~failer:Raise_match_failure
+            None arg_lam pat_act_list Partial
+       in
+       let reperform =
+         Lsequence(
+             Lprim(Psetfield(1, Immediate, Assignment alloc_heap),
+                   [param; Lprim(Psubint, [depth_lam; one_lam], sloc)], sloc), 
+             Lprim (Praise Raise_notrace, [param], sloc))
+       in
+       let lam =
+         Lifthenelse
+           (Lprim (Pintcomp Ceq, [ depth_lam; zero_lam ], sloc),
+            act, reperform, value_kind)
+       in
+       let tag = Btype.hash_variant name in
+       (tag, lam) :: acc)
+      eff_pat_acts []
+  in
+  let fail = Lprim (Praise Raise_notrace, [ param ], sloc) in
+  Llet (Alias, Pintval, name_id, name_def,
+   Llet (StrictOpt, Pintval, depth_id, depth_def,
+     Llet (Alias, Pgenval, arg_id, arg_def,
+      call_switcher value_kind sloc (Some fail) name_lam
+        min_int max_int int_lambda_list)))
+
+let if_tag_cond loc arg n value_kind then_ else_ =
+  Lifthenelse
+    (Lprim(Pintcomp Ceq,
+           [Lprim (Pccall prim_obj_tag, [arg], loc);
+            Lconst (Const_base (Const_int n))],
+           loc),
+     then_, else_, value_kind)
+
+let if_tag_switch loc arg n value_kind then_ else_ =
+  Lswitch
+    (arg,
+     { sw_numconsts = 0;
+       sw_consts = [];
+       sw_numblocks = 256;
+       sw_blocks =
+         [ ( n, then_) ];
+       sw_failaction = Some else_ },
+     loc, value_kind)
+
+let if_tag loc arg n value_kind then_ else_ =
+  if !Clflags.native_code then if_tag_switch loc arg n value_kind then_ else_
+  else if_tag_cond loc arg n value_kind then_ else_
+
+let for_trywith ~scopes value_kind loc param exn_pat_acts eff_pat_acts =
+  let sloc = Scoped_location.of_location ~scopes loc in
+  if_tag sloc param 1 value_kind
+    (for_trywith_effs ~scopes value_kind loc param eff_pat_acts)
+    (for_trywith_exns ~scopes value_kind loc param exn_pat_acts)
 
 let simple_for_let ~scopes value_kind loc param pat body =
   compile_matching ~scopes value_kind loc ~failer:Raise_match_failure

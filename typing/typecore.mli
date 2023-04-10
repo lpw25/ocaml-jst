@@ -209,6 +209,9 @@ type error =
   | Optional_poly_param
   | Effect_type_clash of Ctype.Unification_trace.t * bool
   | Effect_mode_clash of effect_context
+  | Bad_effect_payload
+  | Unexpected_effect_handler
+  | Effect_type_clash_handler of string * effect_context
 
 exception Error of Location.t * Env.t * error
 exception Error_forward of Location.error

@@ -224,6 +224,8 @@ let pat
        (as_computation_pattern (sub.pat sub (p :> pattern))).pat_desc
     | Tpat_exception p ->
        Tpat_exception (sub.pat sub p)
+    | Tpat_effect(n, p) ->
+        Tpat_effect (n, sub.pat sub p)
     | Tpat_or (p1, p2, rd) ->
         Tpat_or (sub.pat sub p1, sub.pat sub p2, rd)
   in
@@ -401,6 +403,7 @@ let expr sub x =
     | Texp_probe {name; handler} ->
       Texp_probe {name; handler = sub.expr sub handler }
     | Texp_probe_is_enabled _ as e -> e
+    | Texp_perform(n, e) -> Texp_perform(n, sub.expr sub e)
   in
   {x with exp_extra; exp_desc; exp_env}
 

@@ -750,10 +750,23 @@ let extract_label l ls = extract_label_aux [] l ls
 let empty_effect_context =
   { effects = [] }
 
+let singleton_effect_context name ty =
+  { effects = [name, ty] }
+
 let is_empty_effect_context eff =
   match eff.effects with
   | [] -> true
   | _ :: _ -> false
+
+let hd_effect_context eff =
+  match eff.effects with
+  | [] -> failwith "hd_effect_context: Empty effect context"
+  | hd :: _ -> hd
+
+let tl_effect_context eff =
+  match eff.effects with
+  | [] -> failwith "tl_effect_context: Empty effect context"
+  | _ :: effects -> { effects }  
 
 let effect_context_of_delayed_effect_context = function
   | Tuple(_, eff) -> eff
@@ -762,6 +775,10 @@ let effect_context_of_delayed_effect_context = function
 let no_effect =
   { delayed = Single empty_effect_context;
     current = empty_effect_context; }
+
+let single_effect name ty =
+  { delayed = Single empty_effect_context;
+    current = singleton_effect_context name ty; }
 
 let delayed_eff eff =
   { delayed = Single eff;
