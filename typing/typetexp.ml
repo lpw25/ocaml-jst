@@ -532,11 +532,6 @@ and transl_type_aux env policy mode styp =
       in
       let ty = newty (Tvariant row) in
       ctyp (Ttyp_variant (tfields, closed, present)) ty
-  | Ptyp_poly([], st) ->
-      let cty, eff = transl_type_and_effect_context env policy mode st in
-      let ty = cty.ctyp_type in
-      let ty' = newty (Tpoly(ty, [], eff)) in
-      ctyp (Ttyp_poly ([], cty)) ty'
   | Ptyp_poly(vars, st) ->
       let vars = List.map (fun v -> v.txt) vars in
       begin_def();
