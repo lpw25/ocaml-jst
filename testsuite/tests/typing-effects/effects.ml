@@ -177,7 +177,7 @@ let tuple_test2 p =
   in
   x
 [%%expect{|
-val tuple_test2 : bool -> 'a -> unit [state: 'b state] = <fun>
+val tuple_test2 : bool -> 'a -> unit [state: 'a state] = <fun>
 |}]
 
 let fail msg = perform_ fail msg
@@ -193,7 +193,7 @@ let handle_bad (local_ f) =
 Line 2, characters 8-9:
 2 |   match f () with
             ^
-Error: The value f is local, so cannot be used inside a closure that might escape
+Error: The value f is local, so cannot be used inside an effect handler
 |}]
 
 let handle (f : unit -> int [fail: string]) =

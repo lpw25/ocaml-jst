@@ -544,7 +544,7 @@ let tuple_effs env exps =
                 (current_acc, delayed_acc, delayed_list_acc))
       (empty_effect_context, empty_effect_context, []) exps
   in
-  let delayed = Tuple(delayed_list, delayed) in
+  let delayed = Tuple(List.rev delayed_list, delayed) in
   { current; delayed }
 
 let submode_effect_context loc env eff mode =
@@ -4166,7 +4166,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
         end
       in
       let arg_env =
-        if has_handler then Env.add_lock Value_mode.global env
+        if has_handler then Env.add_handler_lock env
         else env
       in
       begin_def ();
