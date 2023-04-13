@@ -2182,9 +2182,9 @@ let explain_object = function
 let explain_effect = function
   | Trace.Missing_effect (pos,f) ->
       Some(dprintf "@,@[The %a effect context has no effect %s@]" print_pos pos f)
-  | Trace.Different_effects (s1, s2) ->
+  | Trace.Different_effect_names (s1, s2) ->
       Some(dprintf "@,@[The first effect context has effect %s@ \
-                    where the second has effect %s@]" s1 s2)
+                    where the second has effect %s.@ These effect names have the same hash.@]" s1 s2)
   | Trace.No_effect pos -> Some(
       dprintf
         "@,@[The %a type has no effect context@]"

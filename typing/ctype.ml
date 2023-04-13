@@ -93,7 +93,7 @@ module Unification_trace = struct
 
   type eff =
     | Missing_effect of position * string
-    | Different_effects of string * string
+    | Different_effect_names of string * string
     | No_effect of position
 
   type 'a elt =
@@ -146,7 +146,8 @@ module Unification_trace = struct
     | Variant (Fixed_row(pos,k,f)) -> Variant (Fixed_row(swap_position pos,k,f))
     | Variant (No_tags(pos,f)) -> Variant (No_tags(swap_position pos,f))
     | Eff (Missing_effect(pos, s)) -> Eff (Missing_effect(swap_position pos, s))
-    | Eff (Different_effects(s1, s2)) -> Eff (Different_effects(s2, s1))
+    | Eff (Different_effect_names(s1, s2)) ->
+        Eff (Different_effect_names(s2, s1))
     | Eff (No_effect pos) -> Eff (No_effect (swap_position pos))
     | Effect_diff x -> Effect_diff (swap_diff x)
     | x -> x
@@ -587,6 +588,71 @@ let rec filter_row_fields erase = function
         Rabsent -> fi
       | Reither(_,_,false,e) when erase -> set_row_field e Rabsent; fi
       | _ -> p :: fi
+
+
+                    (***********************************)
+                    (*  Operations on effect contexts  *)
+                    (***********************************)
+
+let associate_effects effs1 effs2 =
+  let effs1 = effs1.effects in
+  let effs2 = effs2.effects in
+  match effs1, effs2 with
+  | [], [] -> [], [], []
+  | _ :: _, [] -> [], effs1, []
+  | [], _ :: _ -> [], [], effs2
+  | _ :: _, _ :: _ ->
+      let effs1 = List.map (fun (n, ty) -> Btype.hash_variant n, n, ty) effs1 in
+      let effs2 = List.map (fun (n, ty) -> Btype.hash_variant n, n, ty) effs2 in
+      let effs1 =
+        List.stable_sort
+          (fun (hash1, _, _) (hash2, _, _) -> Int.compare hash1 hash2)
+          effs1
+      in
+      let effs2 =
+        List.stable_sort
+          (fun (hash1, _, _) (hash2, _, _) -> Int.compare hash1 hash2)
+          effs2
+      in
+      let rec loop pairs miss1 miss2 effs1 effs2 =
+        match effs1, effs2 with
+        | effs1, [] ->
+            let pairs = List.rev pairs in
+            let miss1 =
+              List.rev_append miss1
+                (List.map (fun (_, name, ty) -> (name, ty)) effs1)
+            in
+            let miss2 = List.rev miss2 in
+            pairs, miss1, miss2
+        | [], effs2 ->
+            let pairs = List.rev pairs in
+            let miss1 = List.rev miss1 in
+            let miss2 =
+              List.rev_append miss2
+                (List.map (fun (_, name, ty) -> (name, ty)) effs2)
+            in
+            pairs, miss1, miss2
+        | (hash1, name1, ty1) :: rest1, (hash2, name2, ty2) :: rest2 ->
+            if hash1 = hash2 then
+              loop ((name1, name2, ty1, ty2) :: pairs) miss1 miss2 rest1 rest2
+            else if hash1 < hash2 then
+              loop pairs ((name1, ty1) :: miss1) miss2 rest1 effs2
+            else
+              loop pairs miss1 ((name2, ty2) :: miss2) effs1 rest2
+      in
+      loop [] [] [] effs1 effs2
+
+let split_effects name effs =
+  let hash = Btype.hash_variant name in
+  let rec loop acc = function
+    | [] -> None, List.rev acc
+    | (name', _) as eff :: rest ->
+        if Int.equal (Btype.hash_variant name') hash then
+          Some eff, List.rev_append acc rest
+        else
+          loop (eff :: acc) rest
+  in
+  loop [] effs.effects
 
                     (**************************************)
                     (*  Check genericity of type schemes  *)
@@ -2521,13 +2587,13 @@ and mcomp_effect_context_option type_pairs env eff1 eff2 =
   | None, Some _ | Some _, None -> raise (Unify [])
 
 and mcomp_effect_context type_pairs env eff1 eff2 =
-  if List.length eff1.effects <> List.length eff2.effects then
-    raise (Unify []);
-  List.iter2
-    (fun (n1, ty1) (n2, ty2) ->
+  let pairs, miss1, miss2 = associate_effects eff1 eff2 in
+  if miss1 <> [] || miss2 <> [] then raise (Unify []);
+  List.iter
+    (fun (n1, n2, ty1, ty2) ->
       if not (String.equal n1 n2) then raise (Unify []);
       mcomp type_pairs env ty1 ty2)
-    eff1.effects eff2.effects
+    pairs
 
 and mcomp_fields type_pairs env ty1 ty2 =
   if not (concrete_object ty1 && concrete_object ty2) then assert false;
@@ -3084,24 +3150,24 @@ and unify_effect_context_option env eff1 eff2 =
   | Some _, None -> raise (Unify Trace.[Eff(No_effect Second)])
 
 and unify_effect_context env eff1 eff2 =
-  let c = List.compare_lengths eff1.effects eff2.effects in
-  if c > 0 then begin
-    let missing, _ = List.nth eff1.effects (List.length eff2.effects) in
+  let pairs, miss1, miss2 = associate_effects eff1 eff2 in
+  if miss1 <> [] then begin
+    let missing, _ = List.hd miss1 in
     raise (Unify Trace.[Eff(Missing_effect (Second, missing))])
   end;
-  if c < 0 then begin
-    let missing, _ = List.nth eff2.effects (List.length eff1.effects) in
+  if miss2 <> [] then begin
+    let missing, _ = List.hd miss2 in
     raise (Unify Trace.[Eff(Missing_effect (First, missing))])
   end;
-  List.iter2
-    (fun (n1, ty1) (n2, ty2) ->
+  List.iter
+    (fun (n1, n2, ty1, ty2) ->
       if not (String.equal n1 n2) then
-        raise (Unify Trace.[Eff (Different_effects(n1, n2))]);
+        raise (Unify Trace.[Eff (Different_effect_names(n1, n2))]);
       match unify env ty1 ty2 with
       | () -> ()
       | exception Unify trace ->
           raise (Unify (Trace.incompatible_effects n1 ty1 ty2 :: trace)))
-    eff1.effects eff2.effects
+    pairs
 
 (* Build a fresh row variable for unification *)
 and make_rowvar level use1 rest1 use2 rest2  =
@@ -3410,6 +3476,22 @@ let unify_var env t1 t2 =
   | _ ->
       unify (ref env) t1 t2
 
+let subeffect env eff1 eff2 =
+  let pairs, miss1, _ = associate_effects eff1 eff2 in
+  if miss1 <> [] then begin
+    let missing, _ = List.hd miss1 in
+    raise (Unify Trace.[Eff(Missing_effect (Second, missing))])
+  end;
+  List.iter
+    (fun (n1, n2, ty1, ty2) ->
+      if not (String.equal n1 n2) then
+        raise (Unify Trace.[Eff (Different_effect_names(n1, n2))]);
+      match unify env ty1 ty2 with
+      | () -> ()
+      | exception Unify trace ->
+          raise (Unify (Trace.incompatible_effects n1 ty1 ty2 :: trace)))
+    pairs
+
 let _ = unify' := unify_var
 
 let unify_pairs env ty1 ty2 pairs =
@@ -3420,26 +3502,26 @@ let unify env ty1 ty2 =
   unify_pairs (ref env) ty1 ty2 []
 
 let join_effect_contexts env eff1 eff2 =
-  let rec loop env effects1 effects2 =
-    match effects1, effects2 with
-    | (n1, ty1) :: rest1, (n2, ty2) :: rest2 -> begin
-        if not (String.equal n1 n2) then
-          raise (Unify Trace.[Eff (Different_effects(n1, n2))]);
-        match unify env ty1 ty2 with
-        | exception Unify trace ->
-            raise (Unify (Trace.incompatible_effects n1 ty1 ty2 :: trace))
-        | () ->
-            let rest = loop env rest1 rest2 in
-            (n1, ty1) :: rest
-      end
-    | _ :: _, [] -> effects1
-    | [], _ :: _ -> effects2
-    | [], [] -> []
-  in
-  match loop env eff1.effects eff2.effects with
-  | exception Unify trace ->
-      raise (Unify (Trace.effect_diff eff1 eff2 :: trace))
-  | effects -> {effects}
+  let pairs, miss1, miss2 = associate_effects eff1 eff2 in
+  begin try
+      List.iter
+        (fun (n1, n2, ty1, ty2) ->
+          if not (String.equal n1 n2) then
+            raise (Unify Trace.[Eff (Different_effect_names(n1, n2))]);
+          match unify env ty1 ty2 with
+          | () -> ()
+          | exception Unify trace ->
+              raise (Unify (Trace.incompatible_effects n1 ty1 ty2 :: trace)))
+        pairs
+    with
+    | Unify trace ->
+        raise (Unify (Trace.effect_diff eff1 eff2 :: trace))
+  end;
+  match miss1, miss2 with
+  | [], [] -> eff1
+  | [], _ :: _ -> eff2
+  | _ :: _, [] -> eff1
+  | _ :: _, _ :: _ -> { effects = eff1.effects @ miss2 }
 
 let unify_effect_context env eff1 eff2 =
   univar_pairs := [];
@@ -3465,24 +3547,11 @@ let unify_effect_context_option env eff1 eff2 =
       raise (Unify (expand_trace !env trace))
 
 let subeffect env eff1 eff2 =
-  let rec loop effects1 effects2 =
-    match effects1, effects2 with
-    | [], _ -> ()
-    | (n, _) :: _, [] ->
-        raise (Unify Trace.[Eff(Missing_effect (Second, n))])
-    | (n1, ty1) :: rest1, (n2, ty2) :: rest2 ->
-        if not (String.equal n1 n2) then
-          raise (Unify Trace.[Eff (Different_effects(n1, n2))]);
-        match unify env ty1 ty2 with
-        | exception Unify trace ->
-            raise (Unify (Trace.incompatible_effects n1 ty1 ty2 :: trace))
-        | () -> loop rest1 rest2
-  in
   univar_pairs := [];
   let snap = Btype.snapshot () in
   let env = ref env in
   try
-    loop eff1.effects eff2.effects
+    subeffect env eff1 eff2
   with
     Unify trace ->
       let trace = Trace.effect_diff eff1 eff2 :: trace in
@@ -3602,6 +3671,23 @@ let filter_self_method env lab priv meths ty =
     meths := Meths.add lab pair !meths;
     pair
 
+let filter_effect_context name effs =
+  try
+    let eff, rest = split_effects name effs in
+    let ty =
+      match eff with
+      | None -> newvar ()
+      | Some (name', ty) ->
+          if not (String.equal name name') then
+            raise (Unify Trace.[Eff (Different_effect_names(name, name'))]);
+          ty
+    in
+    let effs = { effects = rest } in
+    ty, effs
+  with
+  | Unify trace ->
+      let effs' = { effects = [name, newvar ()] } in
+      raise (Unify (Trace.effect_diff effs' effs :: trace))
 
                         (***********************************)
                         (*  Matching between type schemes  *)
@@ -3783,25 +3869,22 @@ and moregen_effect_context_option inst_nongen variance type_pairs env e1 e2 =
       raise (Unify [])
 
 and moregen_effect_context inst_nongen variance type_pairs env eff1 eff2 =
-  if List.length eff1.effects <> List.length eff2.effects then
-    raise (Unify []);
-  List.iter2
-    (fun (n1, ty1) (n2, ty2) ->
+  let pairs, miss1, miss2 = associate_effects eff1 eff2 in
+  if miss1 <> [] || miss2 <> [] then raise (Unify []);
+  List.iter
+    (fun (n1, n2, ty1, ty2) ->
       if not (String.equal n1 n2) then raise (Unify []);
       moregen inst_nongen variance type_pairs env ty1 ty2)
-    eff1.effects eff2.effects
+    pairs
 
 and moregen_effect_context_sub inst_nongen variance type_pairs env eff1 eff2 =
-  let rec loop effects1 effects2 =
-    match effects1, effects2 with
-    | [], _ -> ()
-    | _ :: _, [] -> raise (Unify [])
-    | (n1, ty1) :: rest1, (n2, ty2) :: rest2 ->
-        if not (String.equal n1 n2) then raise (Unify []);
-        moregen inst_nongen variance type_pairs env ty1 ty2;
-        loop rest1 rest2
-  in
-  loop eff1.effects eff2.effects
+  let pairs, miss1, _ = associate_effects eff1 eff2 in
+  if miss1 <> [] then raise (Unify []);
+  List.iter
+    (fun (n1, n2, ty1, ty2) ->
+      if not (String.equal n1 n2) then raise (Unify []);
+      moregen inst_nongen variance type_pairs env ty1 ty2)
+    pairs;
 
 and moregen_param_list inst_nongen variance type_pairs env vl tl1 tl2 =
   match vl, tl1, tl2 with
@@ -4112,13 +4195,13 @@ and eqtype_effect_context_option rename type_pairs subst env eff1 eff2 =
   | None, Some _ | Some _, None -> raise (Unify [])
 
 and eqtype_effect_context rename type_pairs subst env eff1 eff2 =
-  if List.length eff1.effects <> List.length eff2.effects then
-    raise (Unify []);
-  List.iter2
-    (fun (n1, ty1) (n2, ty2) ->
+  let pairs, miss1, miss2 = associate_effects eff1 eff2 in
+  if miss1 <> [] || miss2 <> [] then raise (Unify []);
+  List.iter
+    (fun (n1, n2, ty1, ty2) ->
       if not (String.equal n1 n2) then raise (Unify []);
       eqtype rename type_pairs subst env ty1 ty2)
-    eff1.effects eff2.effects
+    pairs
 
 and eqtype_fields rename type_pairs subst env ty1 ty2 =
   let (fields1, rest1) = flatten_fields ty1 in
@@ -4908,13 +4991,13 @@ and subtype_effect_context_option env trace eff1 eff2 cstrs =
   | None, Some _ | Some _, None -> subtype_error env trace
 
 and subtype_effect_context env trace eff1 eff2 cstrs =
-  if List.length eff1.effects <> List.length eff2.effects then
-    subtype_error env trace;
-  List.fold_left2
-    (fun cstrs (n1, ty1) (n2, ty2) ->
+  let pairs, miss1, miss2 = associate_effects eff1 eff2 in
+  if miss1 <> [] || miss2 <> [] then subtype_error env trace;
+  List.fold_left
+    (fun cstrs (n1, n2, ty1, ty2) ->
       if not (String.equal n1 n2) then subtype_error env trace;
       subtype_rec env (Trace.diff ty1 ty2::trace) ty1 ty2 cstrs)
-    cstrs eff1.effects eff2.effects
+    cstrs pairs
 
 and subtype_fields env trace ty1 ty2 cstrs =
   (* Assume that either rest1 or rest2 is not Tvar *)

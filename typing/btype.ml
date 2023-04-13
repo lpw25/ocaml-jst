@@ -758,16 +758,6 @@ let is_empty_effect_context eff =
   | [] -> true
   | _ :: _ -> false
 
-let hd_effect_context eff =
-  match eff.effects with
-  | [] -> failwith "hd_effect_context: Empty effect context"
-  | hd :: _ -> hd
-
-let tl_effect_context eff =
-  match eff.effects with
-  | [] -> failwith "tl_effect_context: Empty effect context"
-  | _ :: effects -> { effects }  
-
 let effect_context_of_delayed_effect_context = function
   | Tuple(_, eff) -> eff
   | Single eff -> eff

@@ -148,7 +148,8 @@ type error =
   | Effect_mode_clash of effect_context
   | Bad_effect_payload
   | Unexpected_effect_handler
-  | Effect_type_clash_handler of string * effect_context
+  | Effect_type_clash_handler of Ctype.Unification_trace.t
+  | Handler_name_clash of string * string
 
 exception Error of Location.t * Env.t * error
 exception Error_forward of Location.error
@@ -459,9 +460,21 @@ let expedite_eff loc env { delayed; current } =
   | exception Unify trace ->
       raise (Error(loc, env, Effect_type_clash(trace, true)))
 
-let handle_eff eff =
-  if Btype.is_empty_effect_context eff.current then eff
-  else { eff with current = Btype.tl_effect_context eff.current }
+let handle_eff loc env handlers { delayed; current } =
+  let ht = Hashtbl.create 5 in
+  String.Set.iter
+    (fun name ->
+      let hash = Btype.hash_variant name in
+      match Hashtbl.find_opt ht hash with
+      | Some name' -> raise (Error(loc, env, Handler_name_clash(name, name')))
+      | None -> Hashtbl.add ht hash name)
+    handlers;
+  let current =
+    String.Set.fold
+      (fun name acc -> snd (Ctype.filter_effect_context name acc))
+      handlers current
+  in
+  { delayed; current }
 
 let lower_effect_context loc env eff =
   match Ctype.lower_effect_context env eff with
@@ -2554,7 +2567,7 @@ and type_pat_aux
         match Builtin_attributes.get_effect sp.ppat_attributes with
         | Ok effect -> effect
         | Error `Disabled -> raise (Typetexp.Error (loc, !env, Local_not_enabled))
-        | Error `Payload -> raise(Error(loc, !env, Bad_effect_payload))
+        | Error `Payload -> raise (Error(loc, !env, Bad_effect_payload))
       in
       match effect with
       | None ->
@@ -2575,14 +2588,10 @@ and type_pat_aux
             match handler_eff with
             | None -> raise (Error(loc, !env, Unexpected_effect_handler))
             | Some eff ->
-                if is_empty_effect_context eff then newvar ()
-                else begin
-                    let name', ty = hd_effect_context eff in
-                    if not (String.equal name name') then
-                      raise (Error(loc, !env,
-                                   Effect_type_clash_handler(name, eff)));
-                    ty
-                end
+                match Ctype.filter_effect_context name eff with
+                | ty, _ -> ty
+                | exception Unify trace ->
+                    raise (Error(loc, !env, Effect_type_clash_handler trace))
           in
           type_pat Value ~alloc_mode p ty (fun p_eff ->
               rcp k {
@@ -3715,16 +3724,26 @@ let contains_gadt p =
      | Tpat_construct (_, cd, _) when cd.cstr_generalized -> true
      | _ -> false } p
 
-let contains_effect_handler p =
-  exists_ppat
-    (function
-     | {ppat_desc = Ppat_exception _; ppat_attributes} ->
-         Builtin_attributes.has_effect ppat_attributes
-     | _ -> false)
-    p
+let rec add_effect_handlers acc p =
+  match p.ppat_desc with
+  | Ppat_any | Ppat_var _ | Ppat_constant _ | Ppat_interval _
+  | Ppat_extension _ | Ppat_type _ | Ppat_unpack _
+  | Ppat_array _ | Ppat_variant _ | Ppat_construct _
+  | Ppat_tuple _ | Ppat_alias _ | Ppat_lazy _ | Ppat_record _ -> acc
+  | Ppat_open (_,p)
+  | Ppat_constraint (p,_) -> add_effect_handlers acc p
+  | Ppat_or (p1,p2) ->
+      add_effect_handlers (add_effect_handlers acc p1) p2
+  | Ppat_exception _ ->
+      match Builtin_attributes.get_effect p.ppat_attributes with
+      | Ok None -> acc
+      | Ok (Some name) -> String.Set.add name acc
+      | Error _ -> acc
 
-let cases_contain_effect_handler cases =
-  List.exists (fun {pc_lhs; _} -> contains_effect_handler pc_lhs) cases
+let cases_effect_handlers cases =
+  List.fold_left
+    (fun acc {pc_lhs; _} -> add_effect_handlers acc pc_lhs)
+    String.Set.empty cases
 
 (* There are various things that we need to do in presence of GADT constructors
    that aren't required if there are none.
@@ -4150,7 +4169,8 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
           exp_attributes = sexp.pexp_attributes;
           exp_env = env }
   | Pexp_match(sarg, caselist) ->
-      let has_handler = cases_contain_effect_handler caselist in
+      let handlers = cases_effect_handlers caselist in
+      let has_handler = not (String.Set.is_empty handlers) in
       let arg_pat_mode, arg_expected_mode =
         if has_handler then
           simple_pat_mode Value_mode.global, mode_nontail Value_mode.global
@@ -4184,7 +4204,7 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
         if has_handler then Some eff.current
         else None
       in
-      let eff = if has_handler then handle_eff eff else eff in
+      let eff = handle_eff loc env handlers eff in
       let cases, partial, body_eff =
         type_cases Computation env arg_pat_mode expected_mode
           arg.exp_type arg_eff handler_eff
@@ -6680,14 +6700,7 @@ and type_cases
     String.Map.mapi
       (fun name cases ->
          let eff = Option.get handler_eff in
-         let ty =
-           if Btype.is_empty_effect_context eff then newvar ()
-           else begin
-             let name', ty = hd_effect_context eff in
-             assert (String.equal name name');
-             ty
-           end
-         in
+         let ty, _ = Ctype.filter_effect_context name eff in
          cases, ty)
       eff_cases
   in
@@ -7895,11 +7908,17 @@ let report_error ~loc env = function
       Location.errorf ~loc "Illegal effect attribute payload"
   | Unexpected_effect_handler ->
       Location.errorf ~loc "Unexpected effect handler"
-  | Effect_type_clash_handler(name, eff) ->
+  | Effect_type_clash_handler trace ->
+      Location.error_of_printer ~loc (fun ppf () ->
+        Printtyp.report_unification_error ppf env trace
+          (function ppf -> fprintf ppf "This handler handles effects")
+          (function ppf ->
+             fprintf ppf "but the handled expression performs effects"))
+        ()
+  | Handler_name_clash(name, name') ->
       Location.errorf ~loc
-        "@[<2>This pattern handles effects named %s,@ \
-              but the handled effect context is:@ %a"
-        name Printtyp.effect_context eff
+        "Cannot simulataneously handle effects named %s and %s@ \
+         because they have the same hash value." name name'
 
 let report_error ~loc env err =
   Printtyp.wrap_printing_env ~error:true env
