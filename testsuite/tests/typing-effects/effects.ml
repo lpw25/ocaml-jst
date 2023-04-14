@@ -129,8 +129,7 @@ Line 2, characters 14-31:
                   ^^^^^^^^^^^^^^^^^
 Error: This expression has effect [state: int state]
        but an expression was expected with effect [stat: 'a]
-       The first effect context has effect state
-       where the second has effect stat
+       The second effect context has no effect state
 |}]
 
 type foo = { foo : unit -> unit [state : int state] }
@@ -158,6 +157,22 @@ Line 3, characters 7-14:
 Error: This expression performs effects [state: float state]
        but the current effect context is [state: int state]
        Types for effect state are incompatible
+|}]
+
+type async
+
+let yield : unit -> unit [async: async] = fun () -> ()
+[%%expect{|
+type async
+val yield : unit -> unit [async: async] = <fun>
+|}]
+
+let mutiple_effects () =
+  set 4;
+  yield ();
+  set 8
+[%%expect{|
+val mutiple_effects : unit -> unit [state: int state; async: async] = <fun>
 |}]
 
 let tuple_test1 p =
@@ -206,6 +221,26 @@ val handle : (unit -> int [fail: string]) -> int = <fun>
 val five : int = 5
 |}]
 
+let handle_missing (f : unit -> int [fail: bool]) =
+  match f () with
+  | x -> x
+  | effect_ fail true -> 0
+[%%expect{|
+Lines 2-4, characters 2-26:
+2 | ..match f () with
+3 |   | x -> x
+4 |   | effect_ fail true -> 0
+Warning 8 [partial-match]: this pattern-matching is not exhaustive.
+Here is an example of a case that is not matched:
+false
+val handle_missing : (unit -> int [fail: bool]) -> int = <fun>
+|}]
+
+let uncaught = handle_missing (fun () -> perform_ fail false)
+[%%expect{|
+Exception: Match_failure ("", 2, 2).
+|}]
+
 let handle_or1 (f : unit -> int [fail: int]) =
   match f () with
   | x | effect_ fail x -> x + 2
@@ -240,4 +275,34 @@ val handle_or3 : (unit -> string [fail: string]) -> string = <fun>
 val a : string = "a?"
 val b : string = "b?"
 val c : string = "c?"
+|}]
+
+let handle_multiple (f : unit -> int [other: bool; fail: string]) =
+  match f () with
+  | x -> x
+  | effect_ fail msg -> String.length msg
+  | effect_ other true -> -1
+  | effect_ other false -> -2
+let five = handle_multiple (fun () -> fail "hello")
+let minus_one = handle_multiple (fun () -> perform_ other true)
+let minus_two = handle_multiple (fun () -> perform_ other false)
+[%%expect{|
+val handle_multiple : (unit -> int [other: bool; fail: string]) -> int =
+  <fun>
+val five : int = 5
+val minus_one : int = -1
+val minus_two : int = -2
+|}]
+
+let handle_some (f : unit -> int [other: int; fail: string]) =
+  match f () with
+  | x -> x
+  | effect_ other n -> n
+let five = handle (fun () -> (handle_some (fun () -> fail "hello")))
+let six = handle (fun () -> (handle_some (fun () -> perform_ other 6)))
+[%%expect{|
+val handle_some :
+  (unit -> int [other: int; fail: string]) -> int [fail: string] = <fun>
+val five : int = 5
+val six : int = 6
 |}]
