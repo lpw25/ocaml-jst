@@ -314,6 +314,16 @@ let constructor_declaration copy_scope s c =
     cd_uid = c.cd_uid;
   }
 
+let operation_declaration copy_scope s od =
+  {
+    od_id = od.od_id;
+    od_args = List.map (typexp copy_scope s) od.od_args;
+    od_res = Option.map (typexp copy_scope s) od.od_res;
+    od_loc = loc s od.od_loc;
+    od_attributes = attrs s od.od_attributes;
+    od_uid = od.od_uid;
+  }
+
 let type_declaration' copy_scope s decl =
   { type_params = List.map (typexp copy_scope s) decl.type_params;
     type_arity = decl.type_arity;
@@ -325,6 +335,8 @@ let type_declaration' copy_scope s decl =
       | Type_record(lbls, rep) ->
           Type_record (List.map (label_declaration copy_scope s) lbls, rep)
       | Type_open -> Type_open
+      | Type_effect ops ->
+          Type_effect (List.map (operation_declaration copy_scope s) ops)
       end;
     type_manifest =
       begin

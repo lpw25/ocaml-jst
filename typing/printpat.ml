@@ -99,7 +99,13 @@ let rec pretty_val : type k . _ -> k general_pattern -> _ = fun ppf v ->
   | Tpat_exception v ->
       fprintf ppf "@[<2>exception@ %a@]" pretty_arg v
   | Tpat_effect(n, v) ->
-      fprintf ppf "@[<2>effect_@ %s@ %a@]" n pretty_arg v
+      fprintf ppf "@[<2>effect_@ %s@ %a@]" n pretty_val v
+  | Tpat_operation (_, op, []) ->
+      fprintf ppf "%s" op.op_name
+  | Tpat_operation (_, op, [w]) ->
+      fprintf ppf "@[<2>%s@ %a@]" op.op_name pretty_arg w
+  | Tpat_operation (_, op, vs) ->
+      fprintf ppf "@[<2>%s@ @[(%a)@]@]" op.op_name (pretty_vals ",") vs
   | Tpat_or _ ->
       fprintf ppf "@[(%a)@]" pretty_or v
 

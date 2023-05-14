@@ -217,6 +217,42 @@ let label_descrs ty_res lbls repres priv =
         (l.ld_id, lbl) :: describe_labels (num+1) rest in
   describe_labels 0 lbls
 
+let operation_descrs ty_path decl ops =
+  let op_eff = newgenconstr ty_path decl.type_params in
+  let no_operations = List.length ops in
+  let rec describe_operations tag = function
+    | [] -> []
+    | {od_id; od_args; od_res; od_loc; od_attributes; od_uid} :: rem ->
+        let rem = describe_operations (tag + 1) rem in
+        let op_name = Ident.name od_id in
+        let existentials =
+          let tyl =
+            match od_res with
+            | None -> od_args
+            | Some res -> res :: od_args
+          in
+          let op_vars = free_vars (newgenty (Ttuple tyl)) in
+          let param_vars = free_vars (newgenty (Ttuple decl.type_params)) in
+          TypeSet.elements (TypeSet.diff op_vars param_vars)
+        in
+        let op =
+          { op_name;
+            op_args = od_args;
+            op_res = od_res;
+            op_eff;
+            op_existentials = existentials;
+            op_arity = List.length od_args;
+            op_tag = tag;
+            op_operations = no_operations;
+            op_loc = od_loc;
+            op_attributes = od_attributes;
+            op_uid = od_uid;
+          }
+        in
+        (od_id, op) :: rem
+  in
+  describe_operations 0 ops
+
 exception Constr_not_found
 
 let rec find_constr tag num_const num_nonconst = function
@@ -237,14 +273,19 @@ let find_constr_by_tag tag cstrlist =
 let constructors_of_type ~current_unit ty_path decl =
   match decl.type_kind with
   | Type_variant cstrs -> constructor_descrs ~current_unit ty_path decl cstrs
-  | Type_record _ | Type_abstract | Type_open -> []
+  | Type_record _ | Type_abstract | Type_open | Type_effect _ -> []
 
 let labels_of_type ty_path decl =
   match decl.type_kind with
   | Type_record(labels, rep) ->
       label_descrs (newgenconstr ty_path decl.type_params)
         labels rep decl.type_private
-  | Type_variant _ | Type_abstract | Type_open -> []
+  | Type_variant _ | Type_abstract | Type_open | Type_effect _ -> []
+
+let operations_of_type ty_path decl =
+  match decl.type_kind with
+  | Type_effect ops -> operation_descrs ty_path decl ops
+  | Type_variant _ | Type_record _ | Type_abstract | Type_open -> []
 
 (* Set row_name in Env, cf. GPR#1204/1329 *)
 let set_row_name decl path =

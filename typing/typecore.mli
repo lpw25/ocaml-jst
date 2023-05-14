@@ -213,6 +213,7 @@ type error =
   | Unexpected_effect_handler
   | Effect_type_clash_handler of Ctype.Unification_trace.t
   | Handler_name_clash of string * string
+  | Operation_arity_mismatch of Longident.t * int * int
 
 exception Error of Location.t * Env.t * error
 exception Error_forward of Location.error

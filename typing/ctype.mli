@@ -236,11 +236,15 @@ val instance_poly_effect_context:
 val instance_expr_scheme:
   ?partial:bool -> type_expr -> delayed_effect_context ->
   type_expr * delayed_effect_context
-val existential_name: constructor_description -> type_expr -> string
+val existential_name: string -> type_expr -> string
 val instance_constructor:
         ?in_pattern:Env.t ref * int ->
         constructor_description -> type_expr list * type_expr
         (* Same, for a constructor *)
+val instance_operation:
+        ?in_pattern:Env.t ref * int ->
+        operation_description -> type_expr list * type_expr option * type_expr
+        (* Same, for an operation *)
 val instance_parameterized_type:
         ?keep_names:bool ->
         type_expr list -> type_expr -> type_expr list * type_expr

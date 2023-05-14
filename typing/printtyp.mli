@@ -125,6 +125,7 @@ val tree_of_value_description: Ident.t -> value_description -> out_sig_item
 val value_description: Ident.t -> formatter -> value_description -> unit
 val label : formatter -> label_declaration -> unit
 val constructor : formatter -> constructor_declaration -> unit
+val operation : formatter -> operation_declaration -> unit
 val tree_of_type_declaration:
     Ident.t -> type_declaration -> rec_status -> out_sig_item
 val type_declaration: Ident.t -> formatter -> type_declaration -> unit

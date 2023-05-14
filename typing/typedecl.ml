@@ -65,6 +65,7 @@ type error =
   | Bad_unboxed_attribute of string
   | Boxed_and_unboxed
   | Nonrec_gadt
+  | Duplicate_operation of string
 
 open Typedtree
 
@@ -286,6 +287,22 @@ let make_constructor env type_path type_params sargs sret_type =
       widen z;
       targs, Some tret_type, args, Some ret_type
 
+let make_operation env sargs sret_type =
+  let sargs =
+    match sargs with
+    | Pcstr_tuple l -> l
+    | Pcstr_record _ -> assert false
+  in
+  let targs = List.map (transl_simple_type env false Global) sargs in
+  let args = List.map (fun t -> t.ctyp_type) targs in
+  let tret_type =
+    match sret_type with
+    | None -> None
+    | Some sret_type -> Some (transl_simple_type env false Global sret_type)
+  in
+  let ret_type = Option.map (fun t -> t.ctyp_type) tret_type in
+  targs, tret_type, args, ret_type
+
 let transl_declaration env sdecl (id, uid) =
   (* Bind type parameters *)
   reset_type_variables();
@@ -343,53 +360,102 @@ let transl_declaration env sdecl (id, uid) =
     match sdecl.ptype_kind with
       | Ptype_abstract -> Ttype_abstract, Type_abstract
       | Ptype_variant scstrs ->
-        if List.exists (fun cstr -> cstr.pcd_res <> None) scstrs then begin
-          match cstrs with
-            [] -> ()
-          | (_,_,loc)::_ ->
-              Location.prerr_warning loc Warnings.Constraint_on_gadt
-        end;
-        let all_constrs = ref String.Set.empty in
-        List.iter
-          (fun {pcd_name = {txt = name}} ->
-            if String.Set.mem name !all_constrs then
-              raise(Error(sdecl.ptype_loc, Duplicate_constructor name));
-            all_constrs := String.Set.add name !all_constrs)
-          scstrs;
-        if List.length
-            (List.filter (fun cd -> cd.pcd_args <> Pcstr_tuple []) scstrs)
-           > (Config.max_tag + 1) then
-          raise(Error(sdecl.ptype_loc, Too_many_constructors));
-        let make_cstr scstr =
-          let name = Ident.create_local scstr.pcd_name.txt in
-          let targs, tret_type, args, ret_type =
-            make_constructor env (Path.Pident id) params
-                             scstr.pcd_args scstr.pcd_res
+          let has_effect_type =
+            match scstrs with
+            | [] -> false
+            | { pcd_attributes; _ } :: _ ->
+                match Builtin_attributes.has_effect_type pcd_attributes with
+                | Ok has_effect_type -> has_effect_type
+                | Error () ->
+                    raise (Typetexp.Error
+                             (sdecl.ptype_loc, Env.empty, Effects_not_enabled))
           in
-          let tcstr =
-            { cd_id = name;
-              cd_name = scstr.pcd_name;
-              cd_args = targs;
-              cd_res = tret_type;
-              cd_loc = scstr.pcd_loc;
-              cd_attributes = scstr.pcd_attributes }
-          in
-          let cstr =
-            { Types.cd_id = name;
-              cd_args = args;
-              cd_res = ret_type;
-              cd_loc = scstr.pcd_loc;
-              cd_attributes = scstr.pcd_attributes;
-              cd_uid = Uid.mk ~current_unit:(Env.get_unit_name ()) }
-          in
-            tcstr, cstr
-        in
-        let make_cstr scstr =
-          Builtin_attributes.warning_scope scstr.pcd_attributes
-            (fun () -> make_cstr scstr)
-        in
-        let tcstrs, cstrs = List.split (List.map make_cstr scstrs) in
-          Ttype_variant tcstrs, Type_variant cstrs
+          if has_effect_type then begin
+            let all_ops = ref String.Set.empty in
+            List.iter
+              (fun {pcd_name = {txt = name}} ->
+                if String.Set.mem name !all_ops then
+                  raise(Error(sdecl.ptype_loc, Duplicate_operation name));
+                all_ops := String.Set.add name !all_ops)
+              scstrs;
+            let make_op scstr =
+              let name = Ident.create_local scstr.pcd_name.txt in
+              let targs, tret_type, args, ret_type =
+                make_operation env scstr.pcd_args scstr.pcd_res
+              in
+              let top =
+                { od_id = name;
+                  od_name = scstr.pcd_name;
+                  od_args = targs;
+                  od_res = tret_type;
+                  od_loc = scstr.pcd_loc;
+                  od_attributes = scstr.pcd_attributes }
+              in
+              let op =
+                { Types.od_id = name;
+                  od_args = args;
+                  od_res = ret_type;
+                  od_loc = scstr.pcd_loc;
+                  od_attributes = scstr.pcd_attributes;
+                  od_uid = Uid.mk ~current_unit:(Env.get_unit_name ()) }
+              in
+              top, op
+            in
+            let make_op scstr =
+              Builtin_attributes.warning_scope scstr.pcd_attributes
+                (fun () -> make_op scstr)
+            in
+            let tops, ops = List.split (List.map make_op scstrs) in
+            Ttype_effect tops, Type_effect ops
+          end else begin
+            if List.exists (fun cstr -> cstr.pcd_res <> None) scstrs then begin
+              match cstrs with
+                [] -> ()
+              | (_,_,loc)::_ ->
+                  Location.prerr_warning loc Warnings.Constraint_on_gadt
+            end;
+            let all_constrs = ref String.Set.empty in
+            List.iter
+              (fun {pcd_name = {txt = name}} ->
+                if String.Set.mem name !all_constrs then
+                  raise(Error(sdecl.ptype_loc, Duplicate_constructor name));
+                all_constrs := String.Set.add name !all_constrs)
+              scstrs;
+            if List.length
+                (List.filter (fun cd -> cd.pcd_args <> Pcstr_tuple []) scstrs)
+               > (Config.max_tag + 1) then
+              raise(Error(sdecl.ptype_loc, Too_many_constructors));
+            let make_cstr scstr =
+              let name = Ident.create_local scstr.pcd_name.txt in
+              let targs, tret_type, args, ret_type =
+                make_constructor env (Path.Pident id) params
+                                 scstr.pcd_args scstr.pcd_res
+              in
+              let tcstr =
+                { cd_id = name;
+                  cd_name = scstr.pcd_name;
+                  cd_args = targs;
+                  cd_res = tret_type;
+                  cd_loc = scstr.pcd_loc;
+                  cd_attributes = scstr.pcd_attributes }
+              in
+              let cstr =
+                { Types.cd_id = name;
+                  cd_args = args;
+                  cd_res = ret_type;
+                  cd_loc = scstr.pcd_loc;
+                  cd_attributes = scstr.pcd_attributes;
+                  cd_uid = Uid.mk ~current_unit:(Env.get_unit_name ()) }
+              in
+                tcstr, cstr
+            in
+            let make_cstr scstr =
+              Builtin_attributes.warning_scope scstr.pcd_attributes
+                (fun () -> make_cstr scstr)
+            in
+            let tcstrs, cstrs = List.split (List.map make_cstr scstrs) in
+              Ttype_variant tcstrs, Type_variant cstrs
+          end
       | Ptype_record lbls ->
           let lbls, lbls' = transl_labels env true lbls in
           let rep =
@@ -514,6 +580,35 @@ let check_constraints_labels env visited l pl =
        check_constraints_rec env (get_loc (Ident.name name) pl) visited ty)
     l
 
+let check_constraints_operations env visited l pl =
+  let pl_index =
+    List.fold_left
+      (fun acc cd -> String.Map.add cd.pcd_name.txt cd acc)
+      String.Map.empty pl
+  in
+  List.iter
+    (fun {Types.od_id; od_args; od_res} ->
+      let pcd =
+        try
+          String.Map.find (Ident.name od_id) pl_index
+        with Not_found -> assert false
+      in
+      let args =
+        match pcd.pcd_args with
+        | Pcstr_tuple styl -> styl
+        | Pcstr_record _ -> assert false
+      in
+      List.iter2
+        (fun sty ty ->
+          check_constraints_rec env sty.ptyp_loc visited ty)
+        args od_args;
+      match pcd.pcd_res, od_res with
+      | Some sty, Some ty ->
+          check_constraints_rec env sty.ptyp_loc visited ty
+      | None, None -> ()
+      | Some _, None | None, Some _ -> assert false)
+    l
+
 let check_constraints env sdecl (_, decl) =
   let visited = ref TypeSet.empty in
   List.iter2
@@ -561,6 +656,13 @@ let check_constraints env sdecl (_, decl) =
       in
       let pl = find_pl sdecl.ptype_kind in
       check_constraints_labels env visited l pl
+  | Type_effect l ->
+      let pl =
+        match sdecl.ptype_kind with
+        | Ptype_variant pl -> pl
+        | Ptype_record _ | Ptype_abstract | Ptype_open -> assert false
+      in
+      check_constraints_operations env visited l pl
   | Type_open -> ()
   end;
   begin match decl.type_manifest with
@@ -1677,6 +1779,8 @@ let report_error ppf = function
       fprintf ppf "A type parameter occurs several times"
   | Duplicate_constructor s ->
       fprintf ppf "Two constructors are named %s" s
+  | Duplicate_operation s ->
+      fprintf ppf "Two operations are named %s" s
   | Too_many_constructors ->
       fprintf ppf
         "@[Too many non-constant constructors@ -- maximum is %i %s@]"

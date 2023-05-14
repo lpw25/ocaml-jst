@@ -243,6 +243,18 @@ type variant_mismatch =
   | Constructor_names of int * Ident.t * Ident.t
   | Constructor_missing of position * Ident.t
 
+type operation_mismatch =
+  | Type
+  | Arity
+  | Returns of position
+
+type effect_mismatch =
+  | Operation_mismatch of Types.operation_declaration
+                            * Types.operation_declaration
+                            * operation_mismatch
+  | Operation_names of int * Ident.t * Ident.t
+  | Operation_missing of position * Ident.t
+
 type extension_constructor_mismatch =
   | Constructor_privacy
   | Constructor_mismatch of Ident.t
@@ -259,6 +271,7 @@ type type_mismatch =
   | Variance
   | Record_mismatch of record_mismatch
   | Variant_mismatch of variant_mismatch
+  | Effect_mismatch of effect_mismatch
   | Unboxed_representation of position
   | Immediate of Type_immediacy.Violation.t
 
@@ -333,6 +346,33 @@ let report_variant_mismatch first second decl ppf err =
       pr "The constructor %s is only present in %s %s."
         (Ident.name s) (choose ord first second) decl
 
+let report_operation_mismatch first second ppf err =
+  let pr fmt  = Format.fprintf ppf fmt in
+  match (err : operation_mismatch) with
+  | Type -> pr "The types are not equal."
+  | Arity -> pr "They have different arities."
+  | Returns ord ->
+      pr "%s returns and %s doesn't."
+        (String.capitalize_ascii (choose ord first second))
+        (choose_other ord first second)
+
+let report_effect_mismatch first second decl ppf err =
+  let pr fmt = Format.fprintf ppf fmt in
+  match (err : effect_mismatch) with
+  | Operation_mismatch (o1, o2, err) ->
+      pr
+        "@[<hv>Operation do not match:@;<1 2>%a@ is not compatible with:\
+         @;<1 2>%a@ %a"
+        Printtyp.operation o1
+        Printtyp.operation o2
+        (report_operation_mismatch first second) err
+  | Operation_names (n, name1, name2) ->
+      pr "Operations number %i have different names, %s and %s."
+        n (Ident.name name1) (Ident.name name2)
+  | Operation_missing (ord, s) ->
+      pr "The operation %s is only present in %s %s."
+        (Ident.name s) (choose ord first second) decl
+
 let report_extension_constructor_mismatch first second decl ppf err =
   let pr fmt = Format.fprintf ppf fmt in
   match (err : extension_constructor_mismatch) with
@@ -355,6 +395,7 @@ let report_type_mismatch0 first second decl ppf err =
   | Variance -> pr "Their variances do not agree."
   | Record_mismatch err -> report_record_mismatch first second decl ppf err
   | Variant_mismatch err -> report_variant_mismatch first second decl ppf err
+  | Effect_mismatch err -> report_effect_mismatch first second decl ppf err
   | Unboxed_representation ord ->
       pr "Their internal representations differ:@ %s %s %s."
          (choose ord first second) decl
@@ -380,7 +421,7 @@ let rec compare_constructor_arguments ~loc env params1 params2 arg1 arg2 =
       else if
         (* Ctype.equal must be called on all arguments at once, cf. PR#7378 *)
         Ctype.equal env true (params1 @ arg1) (params2 @ arg2)
-      then None else Some Type
+      then None else Some (Type : constructor_mismatch)
   | Types.Cstr_record l1, Types.Cstr_record l2 ->
       Option.map
         (fun rec_err -> Inline_record rec_err)
@@ -393,7 +434,7 @@ and compare_constructors ~loc env params1 params2 res1 res2 args1 args2 =
   | Some r1, Some r2 ->
       if Ctype.equal env true [r1] [r2] then
         compare_constructor_arguments ~loc env [r1] [r2] args1 args2
-      else Some Type
+      else Some (Type : constructor_mismatch)
   | Some _, None -> Some (Explicit_return_type First)
   | None, Some _ -> Some (Explicit_return_type Second)
   | None, None ->
@@ -483,6 +524,43 @@ let compare_records_with_representation ~loc env params1 params2 n
       Some (Unboxed_float_representation pos)
   | err -> err
 
+let compare_operations env params1 params2 res1 res2 args1 args2 =
+  if List.length args1 <> List.length args2 then
+    Some (Arity : operation_mismatch)
+  else begin
+    match res1, res2 with
+    | Some r1, Some r2 ->
+        if
+          Ctype.equal env true
+            (params1 @ args1 @ [r1]) (params2 @ args2 @ [r2])
+        then None
+        else Some Type
+    | Some _, None -> Some (Returns First)
+    | None, Some _ -> Some (Returns Second)
+    | None, None ->
+        if Ctype.equal env true (params1 @ args1) (params2 @ args2)
+        then None
+        else Some Type
+    end
+
+let rec compare_effects ~loc env params1 params2 n
+    (ops1 : Types.operation_declaration list)
+    (ops2 : Types.operation_declaration list) =
+  match ops1, ops2 with
+  | [], []   -> None
+  | [], o::_ -> Some (Operation_missing (Second, o.Types.od_id))
+  | o::_, [] -> Some (Operation_missing (First, o.Types.od_id))
+  | od1::rem1, od2::rem2 ->
+      if Ident.name od1.od_id <> Ident.name od2.od_id then
+        Some (Operation_names (n, od1.od_id, od2.od_id))
+      else begin
+        match compare_operations env params1 params2
+                od1.od_res od2.od_res od1.od_args od2.od_args with
+        | Some r ->
+            Some ((Operation_mismatch (od1, od2, r)) : effect_mismatch)
+        | None -> compare_effects ~loc env params1 params2 (n+1) rem1 rem2
+      end
+
 let type_declarations ?(equality = false) ~loc env ~mark name
       decl1 path decl2 =
   Builtin_attributes.check_alerts_inclusion
@@ -545,6 +623,11 @@ let type_declarations ?(equality = false) ~loc env ~mark name
              labels1 labels2
              rep1 rep2)
     | (Type_open, Type_open) -> None
+    | (Type_effect ops1, Type_effect ops2) ->
+         Option.map
+           (fun eff_err -> Effect_mismatch eff_err)
+           (compare_effects ~loc env decl1.type_params decl2.type_params 1
+              ops1 ops2)
     | (_, _) -> Some Kind
   in
   if err <> None then err else

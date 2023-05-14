@@ -390,7 +390,7 @@ let in_pervasives p =
 
 let is_datatype decl=
   match decl.type_kind with
-    Type_record _ | Type_variant _ | Type_open -> true
+    Type_record _ | Type_variant _ | Type_open | Type_effect _ -> true
   | Type_abstract -> false
 
 
@@ -763,6 +763,7 @@ let closed_type_decl decl =
     | Type_record(r, _rep) ->
         List.iter (fun l -> closed_type l.ld_type) r
     | Type_open -> ()
+    | Type_effect _ -> ()
     end;
     begin match decl.type_manifest with
       None    -> ()
@@ -1488,9 +1489,9 @@ let new_declaration expansion_scope manifest =
     type_uid = Uid.mk ~current_unit:(Env.get_unit_name ());
   }
 
-let existential_name cstr ty = match repr ty with
-  | {desc = Tvar (Some name)} -> "$" ^ cstr.cstr_name ^ "_'" ^ name
-  | _ -> "$" ^ cstr.cstr_name
+let existential_name nm ty = match repr ty with
+  | {desc = Tvar (Some name)} -> "$" ^ nm ^ "_'" ^ name
+  | _ -> "$" ^ nm
 
 let instance_constructor ?in_pattern cstr =
   For_copy.with_scope (fun scope ->
@@ -1499,7 +1500,7 @@ let instance_constructor ?in_pattern cstr =
     | Some (env, expansion_scope) ->
         let process existential =
           let decl = new_declaration expansion_scope None in
-          let name = existential_name cstr existential in
+          let name = existential_name cstr.cstr_name existential in
           let path =
             Path.Pident
               (Ident.create_scoped ~scope:expansion_scope
@@ -1517,6 +1518,34 @@ let instance_constructor ?in_pattern cstr =
     let ty_res = copy scope cstr.cstr_res in
     let ty_args = List.map (copy scope) cstr.cstr_args in
     (ty_args, ty_res)
+  )
+
+let instance_operation ?in_pattern op =
+  For_copy.with_scope (fun scope ->
+    begin match in_pattern with
+    | None -> ()
+    | Some (env, expansion_scope) ->
+        let process existential =
+          let decl = new_declaration expansion_scope None in
+          let name = existential_name op.op_name existential in
+          let path =
+            Path.Pident
+              (Ident.create_scoped ~scope:expansion_scope
+                 (get_new_abstract_name name))
+          in
+          let new_env = Env.add_local_type path decl !env in
+          env := new_env;
+          let to_unify = newty (Tconstr (path,[],ref Mnil)) in
+          let tv = copy scope existential in
+          assert (is_Tvar tv);
+          link_type tv to_unify
+        in
+        List.iter process op.op_existentials
+    end;
+    let ty_res = Option.map (copy scope) op.op_res in
+    let ty_args = List.map (copy scope) op.op_args in
+    let ty_eff = copy scope op.op_eff in
+    (ty_args, ty_res, ty_eff)
   )
 
 let instance_parameterized_type ?keep_names sch_args sch =
@@ -1560,7 +1589,15 @@ let map_kind f = function
           (fun l ->
              {l with ld_type = f l.ld_type}
           ) fl, rr)
-
+  | Type_effect ol ->
+      Type_effect (
+        List.map
+          (fun o ->
+             {o with
+              od_args = List.map f o.od_args;
+              od_res = Option.map f o.od_res
+             })
+          ol)
 
 let instance_declaration decl =
   For_copy.with_scope (fun scope ->

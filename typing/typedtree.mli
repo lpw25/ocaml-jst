@@ -34,10 +34,6 @@ type attributes = attribute list
 
 (** {1 Core language} *)
 
-type effect_context_var =
-  | Known of Types.effect_context
-  | Unknown of Types.effect_context option ref
-
 type value = Value_pattern
 type computation = Computation_pattern
 
@@ -121,6 +117,10 @@ and 'k pattern_desc =
         (** [| P1; ...; Pn |] *)
   | Tpat_lazy : value general_pattern -> value pattern_desc
         (** lazy P *)
+  | Tpat_operation :
+      Longident.t loc * Types.operation_description
+      * value general_pattern list
+      -> value pattern_desc
   (* computation patterns *)
   | Tpat_value : tpat_value_argument -> computation pattern_desc
         (** P
@@ -138,7 +138,8 @@ and 'k pattern_desc =
          *)
   | Tpat_exception : value general_pattern -> computation pattern_desc
         (** exception P *)
-  | Tpat_effect : string * value general_pattern -> computation pattern_desc
+  | Tpat_effect :
+      string * value general_pattern -> computation pattern_desc
   (* generic constructions *)
   | Tpat_or :
       'k general_pattern * 'k general_pattern * Types.row_desc option ->
@@ -306,7 +307,8 @@ and expression_desc =
         (** let open[!] M in e *)
   | Texp_probe of { name:string; handler:expression; }
   | Texp_probe_is_enabled of { name:string }
-  | Texp_perform of string * expression
+  | Texp_perform of
+      string * Longident.t loc * Types.operation_description * expression list
 
 and ident_kind = Id_value | Id_prim of Types.alloc_mode option
 
@@ -706,6 +708,7 @@ and type_kind =
   | Ttype_variant of constructor_declaration list
   | Ttype_record of label_declaration list
   | Ttype_open
+  | Ttype_effect of operation_declaration list
 
 and label_declaration =
     {
@@ -730,6 +733,16 @@ and constructor_declaration =
 and constructor_arguments =
   | Cstr_tuple of core_type list
   | Cstr_record of label_declaration list
+
+and operation_declaration =
+    {
+     od_id: Ident.t;
+     od_name: string loc;
+     od_args: core_type list;
+     od_res: core_type option;
+     od_loc: Location.t;
+     od_attributes: attribute list;
+    }
 
 and type_extension =
   {

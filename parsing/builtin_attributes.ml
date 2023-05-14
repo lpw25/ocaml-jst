@@ -487,3 +487,22 @@ let get_effect attrs =
       | Error _ as err -> err
     end
   | None -> Ok None
+
+let has_effect_type attrs =
+  if  List.exists (check ["extension.effect_type"]) attrs then
+    if not (Clflags.Extension.is_enabled Effects) then
+      Error ()
+    else
+      Ok true
+  else
+    Ok false
+
+let has_operation attrs =
+  if List.exists (check ["extension.operation"]) attrs then
+    if not (Clflags.Extension.is_enabled Effects) then
+      Error ()
+    else
+      Ok true
+  else
+    Ok false
+

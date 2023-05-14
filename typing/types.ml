@@ -203,6 +203,7 @@ module Variance = struct
   let unknown = 7
   let full = 127
   let covariant = single May_pos lor single Pos lor single Inj
+  let contravariant = single May_neg lor single Neg lor single Inj
   let swap f1 f2 v =
     let v' = set f1 (mem f2 v) v in set f2 (mem f1 v) v'
   let conjugate v = swap May_pos May_neg (swap Pos Neg v)
@@ -263,6 +264,7 @@ and type_kind =
   | Type_record of label_declaration list  * record_representation
   | Type_variant of constructor_declaration list
   | Type_open
+  | Type_effect of operation_declaration list
 
 and record_representation =
     Record_regular                      (* All fields are boxed / tagged *)
@@ -300,6 +302,16 @@ and constructor_declaration =
 and constructor_arguments =
   | Cstr_tuple of type_expr list
   | Cstr_record of label_declaration list
+
+and operation_declaration =
+  {
+    od_id: Ident.t;
+    od_args: type_expr list;
+    od_res: type_expr option;
+    od_loc: Location.t;
+    od_attributes: Parsetree.attributes;
+    od_uid: Uid.t;
+  }
 
 and unboxed_status =
   {
@@ -483,6 +495,20 @@ type label_description =
     lbl_loc: Location.t;
     lbl_attributes: Parsetree.attributes;
     lbl_uid: Uid.t;
+   }
+
+type operation_description =
+  { op_name: string;                  (* Operation name *)
+    op_args: type_expr list;          (* Types of the arguments *)
+    op_res: type_expr option;         (* Type of the result if any *)
+    op_eff: type_expr;                (* Type of the effect *)
+    op_existentials: type_expr list;  (* list of existentials *)
+    op_arity: int;                    (* Number of arguments *)
+    op_tag: int;                      (* Tag *)
+    op_operations: int;               (* Number of operations *)
+    op_loc: Location.t;
+    op_attributes: Parsetree.attributes;
+    op_uid: Uid.t;
    }
 
 let rec bound_value_identifiers = function

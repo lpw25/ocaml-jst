@@ -152,11 +152,17 @@ let constructor_decl sub cd =
   let cd_res = Option.map (sub.typ sub) cd.cd_res in
   {cd with cd_args; cd_res}
 
+let operation_decl sub od =
+  let od_args = List.map (sub.typ sub) od.od_args in
+  let od_res = Option.map (sub.typ sub) od.od_res in
+  {od with od_args; od_res}
+
 let type_kind sub = function
   | Ttype_abstract -> Ttype_abstract
   | Ttype_variant list -> Ttype_variant (List.map (constructor_decl sub) list)
   | Ttype_record list -> Ttype_record (List.map (label_decl sub) list)
   | Ttype_open -> Ttype_open
+  | Ttype_effect list -> Ttype_effect (List.map (operation_decl sub) list)
 
 let type_declaration sub x =
   let typ_cstrs =
@@ -226,6 +232,8 @@ let pat
        Tpat_exception (sub.pat sub p)
     | Tpat_effect(n, p) ->
         Tpat_effect (n, sub.pat sub p)
+    | Tpat_operation (loc, od, l) ->
+        Tpat_operation (loc, od, List.map (sub.pat sub) l)
     | Tpat_or (p1, p2, rd) ->
         Tpat_or (sub.pat sub p1, sub.pat sub p2, rd)
   in
@@ -403,7 +411,8 @@ let expr sub x =
     | Texp_probe {name; handler} ->
       Texp_probe {name; handler = sub.expr sub handler }
     | Texp_probe_is_enabled _ as e -> e
-    | Texp_perform(n, e) -> Texp_perform(n, sub.expr sub e)
+    | Texp_perform(n, lid, od, args) ->
+        Texp_perform(n, lid, od, List.map (sub.expr sub) args)
   in
   {x with exp_extra; exp_desc; exp_env}
 

@@ -249,7 +249,7 @@ end = struct
           | other_view -> continue orpat other_view
         )
       | ( `Constant _ | `Tuple _ | `Construct _ | `Variant _ | `Array _
-        | `Lazy _ ) as view ->
+        | `Lazy _ | `Operation _ ) as view ->
           stop p view
     in
     aux cl
@@ -290,6 +290,8 @@ end = struct
       | `Tuple ps -> `Tuple (List.map (alpha_pat env) ps)
       | `Construct (cstr, cst_descr, args) ->
           `Construct (cstr, cst_descr, List.map (alpha_pat env) args)
+      | `Operation (op, op_descr, args) ->
+          `Operation (op, op_descr, List.map (alpha_pat env) args)
       | `Variant (cstr, argo, row_desc) ->
           `Variant (cstr, Option.map (alpha_pat env) argo, row_desc)
       | `Record (fields, closed) ->
@@ -374,43 +376,55 @@ let matcher discr (p : Simple.pattern) rem =
   match (discr.pat_desc, ph.pat_desc) with
   | Any, _ -> rem
   | ( ( Constant _ | Construct _ | Variant _ | Lazy | Array _ | Record _
-      | Tuple _ ),
+      | Tuple _ | Operation _ ),
       Any ) ->
       omegas @ rem
   | Constant cst, Constant cst' -> yesif (const_compare cst cst' = 0)
-  | Constant _, (Construct _ | Variant _ | Lazy | Array _ | Record _ | Tuple _)
-    ->
+  | Constant _,
+    (Construct _ | Variant _ | Lazy | Array _
+     | Record _ | Tuple _ | Operation _) ->
       no ()
   | Construct cstr, Construct cstr' ->
       (* NB: may_equal_constr considers (potential) constructor rebinding;
           Types.may_equal_constr does check that the arities are the same,
           preserving row-size coherence. *)
       yesif (Types.may_equal_constr cstr cstr')
-  | Construct _, (Constant _ | Variant _ | Lazy | Array _ | Record _ | Tuple _)
-    ->
+  | Construct _,
+    (Constant _ | Variant _ | Lazy | Array _
+     | Record _ | Tuple _ | Operation _) ->
       no ()
   | Variant { tag; has_arg }, Variant { tag = tag'; has_arg = has_arg' } ->
       yesif (tag = tag' && has_arg = has_arg')
-  | Variant _, (Constant _ | Construct _ | Lazy | Array _ | Record _ | Tuple _)
-    ->
+  | Variant _,
+    (Constant _ | Construct _ | Lazy | Array _
+     | Record _ | Tuple _ | Operation _) ->
       no ()
   | Array n1, Array n2 -> yesif (n1 = n2)
-  | Array _, (Constant _ | Construct _ | Variant _ | Lazy | Record _ | Tuple _)
-    ->
+  | Array _,
+    (Constant _ | Construct _ | Variant _
+     | Lazy | Record _ | Tuple _ | Operation _) ->
       no ()
   | Tuple n1, Tuple n2 -> yesif (n1 = n2)
-  | Tuple _, (Constant _ | Construct _ | Variant _ | Lazy | Array _ | Record _)
-    ->
+  | Tuple _,
+    (Constant _ | Construct _ | Variant _
+     | Lazy | Array _ | Record _ | Operation _) ->
       no ()
   | Record l, Record l' ->
       (* we already expanded the record fully *)
       yesif (List.length l = List.length l')
-  | Record _, (Constant _ | Construct _ | Variant _ | Lazy | Array _ | Tuple _)
-    ->
+  | Record _,
+    (Constant _ | Construct _ | Variant _ | Lazy
+     | Array _ | Tuple _ | Operation _) ->
       no ()
   | Lazy, Lazy -> yes ()
-  | Lazy, (Constant _ | Construct _ | Variant _ | Array _ | Record _ | Tuple _)
-    ->
+  | Lazy,
+    (Constant _ | Construct _ | Variant _ | Array _
+     | Record _ | Tuple _ | Operation _) ->
+      no ()
+  | Operation op, Operation op' -> yesif (op.op_tag = op'.op_tag)
+  | Operation _,
+    (Constant _ | Construct _ | Variant _
+     | Lazy | Array _ | Record _ | Tuple _) ->
       no ()
 
 let ncols = function
@@ -1112,14 +1126,16 @@ let can_group discr pat =
   | Record _, (Record _ | Any)
   | Array _, Array _
   | Variant _, Variant _
-  | Lazy, Lazy ->
+  | Lazy, Lazy
+  | Operation _, Operation _ ->
       true
   | ( _,
       ( Any
       | Constant
           ( Const_int _ | Const_char _ | Const_string _ | Const_float _
           | Const_int32 _ | Const_int64 _ | Const_nativeint _ )
-      | Construct _ | Tuple _ | Record _ | Array _ | Variant _ | Lazy ) ) ->
+      | Construct _ | Tuple _ | Record _ | Array _
+      | Variant _ | Lazy | Operation _) ) ->
       false
 
 let is_or p =
@@ -1705,6 +1721,42 @@ let divide_constructor ~scopes ctx pm =
     (fun cstr1 cstr2 -> Types.equal_tag cstr1.cstr_tag cstr2.cstr_tag)
     get_key_constr
     get_pat_args_constr
+    ctx pm
+
+let get_expr_args_operation ~scopes head (arg, _mut) rem =
+  let op =
+    match head.pat_desc with
+    | Patterns.Head.Operation op -> op
+    | _ -> fatal_error "Matching.get_expr_args_constr"
+  in
+  let loc = head_loc ~scopes head in
+  let make_field_accesses first_pos last_pos argl =
+    let rec make_args pos =
+      if pos > last_pos then
+        argl
+      else
+        (Lprim (Pfield (pos, Reads_agree), [ arg ], loc), Alias)
+          :: make_args (pos + 1)
+    in
+    make_args first_pos
+  in
+  make_field_accesses 3 (op.op_arity + 2) rem
+
+let get_key_operation = function
+  | { pat_desc = Tpat_operation (_, op, _) } -> op
+  | _ -> assert false
+
+let get_pat_args_operation p rem =
+  match p with
+  | { pat_desc = Tpat_operation (_, _, args) } -> args @ rem
+  | _ -> assert false
+
+let divide_operation ~scopes ctx pm =
+  divide
+    (get_expr_args_operation ~scopes)
+    (fun op1 op2 -> Int.equal op1.op_tag op2.op_tag)
+    get_key_operation
+    get_pat_args_operation
     ctx pm
 
 (* Matching against a variant *)
@@ -2553,6 +2605,17 @@ let complete_pats_constrs = function
         (complete_constrs constr (List.map tag_of_constr constrs))
   | _ -> assert false
 
+let complete_pats_ops = function
+  | op :: _ as ops ->
+      let tag_of_op op =
+        op.pat_desc.op_tag in
+      let pat_of_op o =
+        let open Patterns.Head in
+        to_omega_pattern { op with pat_desc = Operation o } in
+      List.map pat_of_op
+        (complete_operations op (List.map tag_of_op ops))
+  | _ -> assert false
+
 (*
      Following two ``failaction'' function compute n, the trap handler
     to jump to in case of failure of elementary tests
@@ -2573,7 +2636,7 @@ let mk_failaction_neg partial ctx def =
   | Total -> (None, Jumps.empty)
 
 (* In line with the article and simpler than before *)
-let mk_failaction_pos partial seen ctx defs =
+let mk_failaction_pos partial get_key complete seen ctx defs =
   if dbg then (
     Format.eprintf "**POS**\n";
     Default_environment.pp defs;
@@ -2588,7 +2651,7 @@ let mk_failaction_pos partial seen ctx defs =
             let action = Lstaticraise (i, []) in
             let klist =
               List.fold_right
-                (fun pat r -> (get_key_constr pat, action) :: r)
+                (fun pat r -> (get_key pat, action) :: r)
                 pats klist
             and jumps =
               Jumps.add i (Context.lub (list_as_pat pats) ctx) jumps
@@ -2604,7 +2667,7 @@ let mk_failaction_pos partial seen ctx defs =
         | _ -> scan_def ((List.map fst now, idef) :: env) later rem
       )
   in
-  let fail_pats = complete_pats_constrs seen in
+  let fail_pats = complete seen in
   if List.length fail_pats < !Clflags.match_context_rows then (
     let fail, jmps =
       scan_def []
@@ -2775,7 +2838,8 @@ let combine_constructor value_kind loc arg pat_env cstr partial ctx def
           let constrs =
             List.map2 (fun (constr, _act) p -> { p with pat_desc = constr })
               descr_lambda_list pats in
-          mk_failaction_pos partial constrs ctx def
+          mk_failaction_pos partial get_key_constr complete_pats_constrs
+            constrs ctx def
       in
       let descr_lambda_list = fails @ descr_lambda_list in
       let consts, nonconsts =
@@ -2831,6 +2895,45 @@ let combine_constructor value_kind loc arg pat_env cstr partial ctx def
           )
       in
       (lambda1, Jumps.union local_jumps total1)
+
+let combine_operation value_kind loc arg op partial ctx def
+    ((descr_lambda_list : (Types.operation_description * _) list), total1, pats) =
+  let ncases = List.length descr_lambda_list in
+  let sig_complete = ncases = op.op_operations in
+  let fail_opt, fails, local_jumps =
+    if sig_complete then
+      (None, [], Jumps.empty)
+    else
+      let ops =
+        List.map2
+          (fun (op, _act) p -> { p with pat_desc = op })
+          descr_lambda_list pats
+      in
+      mk_failaction_pos partial get_key_operation complete_pats_ops
+        ops ctx def
+  in
+  let descr_lambda_list = fails @ descr_lambda_list in
+  let lambda1 =
+    match (fail_opt, same_actions descr_lambda_list) with
+    | None, Some act -> act (* Identical actions, no failure *)
+    | _ ->
+        let arg = Lprim (Pfield (2, Reads_agree), [arg], loc) in
+        let consts =
+          List.map (fun (op, act) -> (op.op_tag, act)) descr_lambda_list
+        in
+        let sw =
+          { sw_numconsts = op.op_operations;
+            sw_consts = consts;
+            sw_numblocks = 0;
+            sw_blocks = [];
+            sw_failaction = fail_opt
+          }
+        in
+        let hs, sw = share_actions_sw value_kind sw in
+        let sw = reintroduce_fail sw in
+        hs (Lswitch (arg, sw, loc, value_kind))
+  in
+  (lambda1, Jumps.union local_jumps total1)
 
 let make_test_sequence_variant_constant value_kind fail arg int_lambda_list =
   let _, (cases, actions) = as_interval fail min_int max_int int_lambda_list in
@@ -3284,6 +3387,12 @@ and do_compile_matching ~scopes value_kind repr partial ctx pmh =
             partial (divide_variant ~scopes !row)
             (combine_variant value_kind ploc !row arg partial)
             ctx pm
+      | Operation op ->
+          compile_test
+            (compile_match ~scopes value_kind repr partial)
+            partial (divide_operation ~scopes)
+            (combine_operation value_kind ploc arg op partial)
+            ctx pm
     )
   | PmVar { inside = pmh } ->
       let lam, total =
@@ -3333,6 +3442,7 @@ let is_lazy_pat p =
   | Tpat_array _
   | Tpat_or _
   | Tpat_constant _
+  | Tpat_operation _
   | Tpat_var _
   | Tpat_any ->
       false
@@ -3356,6 +3466,7 @@ let is_record_with_mutable_field p =
   | Tpat_array _
   | Tpat_or _
   | Tpat_constant _
+  | Tpat_operation _
   | Tpat_var _
   | Tpat_any ->
       false
@@ -3486,16 +3597,13 @@ let for_trywith_effs ~scopes value_kind loc param eff_pat_acts =
   let depth_id = Ident.create_local "depth" in
   let depth_def = Lprim (Pfield (1, Reads_vary), [param], sloc) in
   let depth_lam = Lvar depth_id in
-  let arg_id = Ident.create_local "arg" in
-  let arg_def = Lprim (Pfield (2, Reads_agree), [param], sloc) in
-  let arg_lam = Lvar arg_id in
   let int_lambda_list =
     String.Map.fold
       (fun name pat_act_list acc ->
         let act =
           compile_matching ~scopes value_kind loc
             ~failer:Raise_match_failure
-            None arg_lam pat_act_list Partial
+            None param pat_act_list Partial
        in
        let reperform =
          Lsequence(
@@ -3515,9 +3623,8 @@ let for_trywith_effs ~scopes value_kind loc param eff_pat_acts =
   let fail = Lprim (Praise Raise_notrace, [ param ], sloc) in
   Llet (Alias, Pintval, name_id, name_def,
    Llet (StrictOpt, Pintval, depth_id, depth_def,
-     Llet (Alias, Pgenval, arg_id, arg_def,
       call_switcher value_kind sloc (Some fail) name_lam
-        min_int max_int int_lambda_list)))
+        min_int max_int int_lambda_list))
 
 let if_tag_cond loc arg n value_kind then_ else_ =
   Lifthenelse
@@ -3750,6 +3857,7 @@ let flatten_simple_pattern size (p : Simple.pattern) =
   | `Record _
   | `Lazy _
   | `Construct _
+  | `Operation _
   | `Constant _ ->
       (* All calls to this function originate from [do_for_multiple_match],
          where we know that the scrutinee is a tuple literal.

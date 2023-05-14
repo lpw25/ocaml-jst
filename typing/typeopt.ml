@@ -92,6 +92,8 @@ let classify env ty =
               Any
           | Type_record _ | Type_variant _ | Type_open ->
               Addr
+          | Type_effect _ ->
+              Any
         with Not_found ->
           (* This can happen due to e.g. missing -I options,
              causing some .cmi files to be unavailable.
@@ -191,6 +193,8 @@ let value_kind env ty =
         let visited = Numbers.Int.Set.add ty.id visited in
         match (Env.find_type p env).type_kind with
         | exception Not_found ->
+          num_nodes_visited, Pgenval
+        | Type_effect _ ->
           num_nodes_visited, Pgenval
         | Type_variant constructors ->
           let is_constant (constructor : Types.constructor_declaration) =

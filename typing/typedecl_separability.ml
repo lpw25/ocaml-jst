@@ -123,6 +123,7 @@ let structure : type_definition -> type_structure = fun def ->
                 result_type_parameter_instances;
               }
         end)
+  | Type_effect _ -> Algebraic Zero
 
 
 type error =

@@ -409,6 +409,8 @@ module Analyser =
       | Types.Type_open ->
           Odoc_type.Type_open
 
+      | Types.Type_effect _ ->
+          Odoc_type.Type_abstract
 
     let get_cstr_args env pos_end =
       let tuple ct = Odoc_env.subst_type env ct.Typedtree.ctyp_type in

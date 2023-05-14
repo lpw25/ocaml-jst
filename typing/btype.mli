@@ -433,6 +433,10 @@ module Value_mode : sig
 
   val newvar : unit -> t
 
+  val newvar_below : t -> t * bool
+
+  val newvar_above : t -> t * bool
+
   val check_const : t -> const option
 
   val print : Format.formatter -> t -> unit

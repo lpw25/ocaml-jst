@@ -248,6 +248,14 @@ let effect_attr name =
 let mkpat_effect name pat =
   {pat with ppat_attributes = effect_attr name :: pat.ppat_attributes}
 
+let operation_loc = mknoloc "extension.operation"
+
+let operation_attr =
+  Attr.mk ~loc:Location.none operation_loc (PStr [])
+
+let mkpat_operation pat =
+  {pat with ppat_attributes = operation_attr :: pat.ppat_attributes}
+
 let perform_loc = mknoloc "extension.perform"
 
 let perform_extension name =
@@ -272,6 +280,19 @@ let effects_attr effs =
 
 let mktyp_effects typ effs =
   {typ with ptyp_attributes = effects_attr effs :: typ.ptyp_attributes}
+
+let effect_type_loc = mknoloc "extension.effect_type"
+
+let effect_type_attr =
+  Attr.mk ~loc:Location.none effect_type_loc (PStr [])
+
+let mkcd_effect_type cd =
+  {cd with pcd_attributes = effect_type_attr :: cd.pcd_attributes}
+
+let mkcds_effect_type cds =
+  match cds with
+  | [] -> assert false
+  | cd :: rest -> mkcd_effect_type cd :: rest
 
 (* TODO define an abstraction boundary between locations-as-pairs
    and locations-as-Location.t; it should be clear when we move from
@@ -2348,8 +2369,12 @@ expr:
      { not_expecting $loc($1) "wildcard \"_\"" }
   | LOCAL seq_expr
      { mkexp_stack ~loc:$sloc $2 }
-  | PERFORM LIDENT simple_expr
-     { mkexp_perform ~loc:$sloc $2 $3 }
+  | PERFORM LIDENT mkrhs(constr_longident)
+     { mkexp_perform ~loc:$sloc $2
+         (mkexp ~loc:$sloc (Pexp_construct($3, None))) }
+  | PERFORM LIDENT mkrhs(constr_longident) simple_expr
+     { mkexp_perform ~loc:$sloc $2
+         (mkexp ~loc:$sloc (Pexp_construct($3, Some $4))) }
 ;
 %inline expr_attrs:
   | LET MODULE ext_attributes mkrhs(module_name) module_binding_body IN seq_expr
@@ -2860,8 +2885,17 @@ pattern:
       { $1 }
   | EXCEPTION ext_attributes pattern %prec prec_constr_appl
       { mkpat_attrs ~loc:$sloc (Ppat_exception $3) $2}
-  | EFFECT ext_attributes LIDENT pattern %prec prec_constr_appl
-      { mkpat_effect $3 (mkpat_attrs ~loc:$sloc (Ppat_exception $4) $2) }
+  | EFFECT ext_attributes LIDENT mkrhs(constr_longident)
+      { let constr = mkpat ~loc:$sloc (Ppat_construct($4, None)) in
+        let operation = mkpat_operation constr in
+        let exn = mkpat_attrs ~loc:$sloc (Ppat_exception operation) $2 in
+        mkpat_effect $3 exn }
+  | EFFECT ext_attributes LIDENT mkrhs(constr_longident) pattern
+    %prec prec_constr_appl
+      { let constr = mkpat ~loc:$sloc (Ppat_construct($4, Some $5)) in
+        let operation = mkpat_operation constr in
+        let exn = mkpat_attrs ~loc:$sloc (Ppat_exception operation) $2 in
+        mkpat_effect $3 exn }
 ;
 
 pattern_no_exn:
@@ -3152,6 +3186,10 @@ nonempty_type_kind:
     priv = inline_private_flag
     LBRACE ls = label_declarations RBRACE
       { (Ptype_record ls, priv, oty) }
+  | oty = type_synonym
+    EFFECT
+    cds = effect_declarations
+      { (Ptype_variant (mkcds_effect_type cds), Public, oty) }
 ;
 %inline type_synonym:
   ioption(terminated(core_type, EQUAL))
@@ -3204,6 +3242,32 @@ type_variance:
         expecting $loc($1) "type_variance" }
 ;
 
+effect_declarations:
+  | cs = bar_llist(effect_declaration)
+      { cs }
+;
+effect_declaration(opening):
+  opening
+  cid = mkrhs(constr_ident)
+  args_res = effect_arguments
+  attrs = attributes
+    {
+      let args, res = args_res in
+      let info = symbol_info $endpos in
+      let loc = make_loc $sloc in
+      Type.constructor cid ~args ?res ~attrs ~loc ~info
+    }
+;
+effect_arguments:
+  | COLON inline_separated_nonempty_llist(STAR, atomic_type) MINUSGREATER atomic_type %prec below_HASH
+      { (Pcstr_tuple $2, Some $4) }
+  | COLON atomic_type %prec below_HASH
+      { (Pcstr_tuple [],Some $2) }
+  | COLON inline_separated_nonempty_llist(STAR, atomic_type) MINUSGREATER DOT
+      { (Pcstr_tuple $2, None) }
+  | COLON DOT
+      { (Pcstr_tuple [], None) }
+;
 (* A sequence of constructor declarations is either a single BAR, which
    means that the list is empty, or a nonempty BAR-separated list of
    declarations, with an optional leading BAR. *)

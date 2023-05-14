@@ -431,7 +431,7 @@ module IdTbl =
   end
 
 type type_descriptions =
-    constructor_description list * label_description list
+    constructor_description list * label_description list * operation_description list
 
 let in_signature_flag = 0x01
 
@@ -439,6 +439,7 @@ type t = {
   values: (value_lock, value_entry, value_data) IdTbl.t;
   constrs: constructor_data TycompTbl.t;
   labels: label_data TycompTbl.t;
+  operations: (empty, operation_data, operation_data) IdTbl.t;
   types: (empty, type_data, type_data) IdTbl.t;
   modules: (empty, module_entry, module_data) IdTbl.t;
   modtypes: (empty, modtype_data, modtype_data) IdTbl.t;
@@ -480,6 +481,7 @@ and structure_components = {
   mutable comp_values: value_data NameMap.t;
   mutable comp_constrs: constructor_data list NameMap.t;
   mutable comp_labels: label_data list NameMap.t;
+  mutable comp_operations: operation_data NameMap.t;
   mutable comp_types: type_data NameMap.t;
   mutable comp_modules: module_data NameMap.t;
   mutable comp_modtypes: modtype_data NameMap.t;
@@ -504,7 +506,11 @@ and address_lazy = (address_unforced, address) EnvLazy.t
 and value_data =
   { vda_description : value_description;
     vda_address : address_lazy;
-    vda_mode : Value_mode.t }
+    vda_mode : value_mode }
+
+and value_mode =
+  | Ordinary of Value_mode.t
+  | Delayed of Value_mode.t
 
 and value_entry =
   | Val_bound of value_data
@@ -515,6 +521,8 @@ and constructor_data =
     cda_address : address_lazy option; }
 
 and label_data = label_description
+
+and operation_data = operation_description
 
 and type_data =
   { tda_declaration : type_declaration;
@@ -543,6 +551,7 @@ let empty_structure =
     comp_values = NameMap.empty;
     comp_constrs = NameMap.empty;
     comp_labels = NameMap.empty;
+    comp_operations = NameMap.empty;
     comp_types = NameMap.empty;
     comp_modules = NameMap.empty; comp_modtypes = NameMap.empty;
     comp_classes = NameMap.empty;
@@ -557,6 +566,7 @@ type lookup_error =
   | Unbound_type of Longident.t
   | Unbound_constructor of Longident.t
   | Unbound_label of Longident.t
+  | Unbound_operation of Longident.t
   | Unbound_module of Longident.t
   | Unbound_class of Longident.t
   | Unbound_modtype of Longident.t
@@ -612,13 +622,16 @@ let check_shadowing env = function
   | `Label (Some (l1, l2))
     when not (!same_constr env l1.lbl_res l2.lbl_res) ->
       Some "label"
+  | `Operation (Some (o1, o2))
+    when not (!same_constr env o1.op_eff o2.op_eff) ->
+      Some "operation"
   | `Value (Some _) -> Some "value"
   | `Type (Some _) -> Some "type"
   | `Module (Some _) | `Component (Some _) -> Some "module"
   | `Module_type (Some _) -> Some "module type"
   | `Class (Some _) -> Some "class"
   | `Class_type (Some _) -> Some "class type"
-  | `Constructor _ | `Label _
+  | `Constructor _ | `Label _ | `Operation _
   | `Value None | `Type None | `Module None | `Module_type None
   | `Class None | `Class_type None | `Component None ->
       None
@@ -626,6 +639,7 @@ let check_shadowing env = function
 let empty = {
   values = IdTbl.empty; constrs = TycompTbl.empty;
   labels = TycompTbl.empty; types = IdTbl.empty;
+  operations = IdTbl.empty;
   modules = IdTbl.empty; modtypes = IdTbl.empty;
   classes = IdTbl.empty; cltypes = IdTbl.empty;
   summary = Env_empty; local_constraints = Path.Map.empty;
@@ -1043,12 +1057,15 @@ let find_ident_constructor id env =
 let find_ident_label id env =
   TycompTbl.find_same id env.labels
 
+let find_ident_operation id env =
+  IdTbl.find_same id env.operations
+
 let type_of_cstr path = function
   | {cstr_inlined = Some decl; _} ->
       let labels =
         List.map snd (Datarepr.labels_of_type path decl)
       in
-      { tda_declaration = decl; tda_descriptions = ([], labels) }
+      { tda_declaration = decl; tda_descriptions = ([], labels, []) }
   | _ ->
       assert false
 
@@ -1057,7 +1074,7 @@ let find_type_full path env =
   | Regular p -> begin
       match Path.Map.find p env.local_constraints with
       | decl ->
-          { tda_declaration = decl; tda_descriptions = [], [] }
+          { tda_declaration = decl; tda_descriptions = [], [], [] }
       | exception Not_found -> find_type_full p env
     end
   | Cstr (ty_path, s) ->
@@ -1065,7 +1082,7 @@ let find_type_full path env =
         try find_type_full ty_path env
         with Not_found -> assert false
       in
-      let (cstrs, _) = tda.tda_descriptions in
+      let (cstrs, _, _) = tda.tda_descriptions in
       let cstr =
         try List.find (fun cstr -> cstr.cstr_name = s) cstrs
         with Not_found -> assert false
@@ -1569,8 +1586,8 @@ let rec components_of_module_maker
     MtyL_signature sg ->
       let c =
         { comp_values = NameMap.empty;
-          comp_constrs = NameMap.empty;
-          comp_labels = NameMap.empty; comp_types = NameMap.empty;
+          comp_constrs = NameMap.empty; comp_labels = NameMap.empty;
+          comp_operations = NameMap.empty; comp_types = NameMap.empty;
           comp_modules = NameMap.empty; comp_modtypes = NameMap.empty;
           comp_classes = NameMap.empty; comp_cltypes = NameMap.empty }
       in
@@ -1597,7 +1614,7 @@ let rec components_of_module_maker
             in
             let vda = { vda_description = decl';
                         vda_address = addr;
-                        vda_mode = Value_mode.global } in
+                        vda_mode = Ordinary Value_mode.global } in
             c.comp_values <- NameMap.add (Ident.name id) vda c.comp_values;
         | SigL_type(id, decl, _, _) ->
             let final_decl = Subst.type_declaration sub decl in
@@ -1610,9 +1627,11 @@ let rec components_of_module_maker
             in
             let labels =
               List.map snd (Datarepr.labels_of_type path final_decl) in
+            let operations =
+              List.map snd (Datarepr.operations_of_type path final_decl) in
             let tda =
               { tda_declaration = final_decl;
-                tda_descriptions = (constructors, labels); }
+                tda_descriptions = (constructors, labels, operations); }
             in
             c.comp_types <- NameMap.add (Ident.name id) tda c.comp_types;
             List.iter
@@ -1626,6 +1645,11 @@ let rec components_of_module_maker
                 c.comp_labels <-
                   add_to_tbl descr.lbl_name descr c.comp_labels)
               labels;
+            List.iter
+              (fun descr ->
+                 c.comp_operations <-
+                   NameMap.add descr.op_name descr c.comp_operations)
+              operations;
             env := store_type_infos id decl !env
         | SigL_typext(id, ext, _, _) ->
             let ext' = Subst.extension_constructor sub ext in
@@ -1736,11 +1760,12 @@ and check_value_name name loc =
         error (Illegal_value_name(loc, name))
     done
 
-and store_value ?check mode id addr decl env =
+and store_value ?check ~delayed mode id addr decl env =
   check_value_name (Ident.name id) decl.val_loc;
   Option.iter
     (fun f -> check_usage decl.val_loc id decl.val_uid f !value_declarations)
     check;
+  let mode = if delayed then Delayed mode else Ordinary mode in
   let vda = { vda_description = decl; vda_address = addr; vda_mode = mode } in
   { env with
     values = IdTbl.add id (Val_bound vda) env.values;
@@ -1758,7 +1783,10 @@ and store_type ~check id info env =
       ~current_unit:(get_unit_name ())
   in
   let labels = Datarepr.labels_of_type path info in
-  let descrs = (List.map snd constructors, List.map snd labels) in
+  let operations = Datarepr.operations_of_type path info in
+  let descrs =
+    (List.map snd constructors, List.map snd labels, List.map snd operations)
+  in
   let tda = { tda_declaration = info; tda_descriptions = descrs } in
   if check && not loc.Location.loc_ghost &&
     Warnings.is_active (Warnings.Unused_constructor ("", false, false))
@@ -1795,6 +1823,10 @@ and store_type ~check id info env =
       List.fold_right
         (fun (id, descr) labels -> TycompTbl.add id descr labels)
         labels env.labels;
+    operations =
+      List.fold_right
+        (fun (id, descr) operations -> IdTbl.add id descr operations)
+        operations env.operations;
     types = IdTbl.add id tda env.types;
     summary = Env_type(env.summary, id, info) }
 
@@ -1804,7 +1836,7 @@ and store_type_infos id info env =
      manifest-ness of the type.  Used in components_of_module to
      keep track of type abbreviations (e.g. type t = float) in the
      computation of label representations. *)
-  let tda = { tda_declaration = info; tda_descriptions = [], [] } in
+  let tda = { tda_declaration = info; tda_descriptions = [], [], [] } in
   { env with
     types = IdTbl.add id tda env.types;
     summary = Env_type(env.summary, id, info) }
@@ -1925,9 +1957,9 @@ let add_functor_arg id env =
    functor_args = Ident.add id () env.functor_args;
    summary = Env_functor_arg (env.summary, id)}
 
-let add_value ?check ?(mode = Value_mode.global) id desc env =
+let add_value ?check ?(mode = Value_mode.global) ?(delayed=false) id desc env =
   let addr = value_declaration_address env id desc in
-  store_value ?check mode id addr desc env
+  store_value ?check ~delayed mode id addr desc env
 
 let add_type ~check id info env =
   store_type ~check id info env
@@ -1984,7 +2016,9 @@ let scrape_alias t mty =
 let enter_value ?check name desc env =
   let id = Ident.create_local name in
   let addr = value_declaration_address env id desc in
-  let env = store_value ?check Value_mode.global id addr desc env in
+  let env =
+    store_value ?check Value_mode.global ~delayed:false id addr desc env
+  in
   (id, env)
 
 let enter_type ~scope name info env =
@@ -2085,6 +2119,9 @@ let add_components slot root env0 comps =
   let labels =
     add_l (fun x -> `Label x) comps.comp_labels env0.labels
   in
+  let operations =
+    add (fun x -> `Operation x) comps.comp_operations env0.operations
+  in
   let values =
     add (fun x -> `Value x) comps.comp_values env0.values
   in
@@ -2107,6 +2144,7 @@ let add_components slot root env0 comps =
     summary = Env_open(env0.summary, root);
     constrs;
     labels;
+    operations;
     values;
     types;
     modtypes;
@@ -2452,17 +2490,25 @@ let lookup_ident_module (type a) (load : a load) ~errors ~use ~loc s env =
     end
 
 let lock_mode ~errors ~loc env id vmode locks =
-  List.fold_left
-    (fun vmode lock ->
-      match lock with
-      | Region_lock -> Value_mode.local_to_regional vmode
-      | Lock {mode; source} ->
-          match Value_mode.submode vmode mode with
-          | Ok () -> vmode
-          | Error _ ->
-              may_lookup_error errors loc env
-                (Local_value_used_in_closure (id, source)))
-    vmode locks
+  let mode =
+    List.fold_left
+      (fun vmode lock ->
+        match vmode, lock with
+        | Ordinary vmode, Region_lock -> Ordinary (Value_mode.local_to_regional vmode)
+        | Ordinary vmode, Lock {mode; source} -> begin
+            match Value_mode.submode vmode mode with
+            | Ok () -> Ordinary vmode
+            | Error _ ->
+                may_lookup_error errors loc env
+                  (Local_value_used_in_closure (id, source))
+          end
+        | Delayed vmode, Lock _ -> Ordinary vmode
+        | Delayed _, Region_lock -> assert false)
+      vmode locks
+  in
+  match mode with
+  | Delayed _ -> assert false
+  | Ordinary mode -> mode
 
 let lookup_ident_value ~errors ~use ~loc name env =
   match IdTbl.find_name_and_modes wrap_value ~mark:use name env.values with
@@ -2533,6 +2579,12 @@ let lookup_all_ident_constructors ~errors ~use ~loc usage s env =
            in
            (cda.cda_description, use_fn))
         cstrs
+
+let lookup_ident_operation ~errors ~use ~loc s env =
+  match IdTbl.find_name wrap_identity ~mark:use s env.operations with
+  | _, res -> res
+  | exception Not_found ->
+      may_lookup_error errors loc env (Unbound_operation (Lident s))
 
 let rec lookup_module_components ~errors ~use ~loc lid env =
   match lid with
@@ -2685,6 +2737,13 @@ let lookup_all_dot_constructors ~errors ~use ~loc usage l s env =
                (cda.cda_description, use_fun))
             cstrs
 
+let lookup_dot_operation ~errors ~use ~loc l s env =
+  let (_, comps) = lookup_structure_components ~errors ~use ~loc l env in
+  match NameMap.find s comps.comp_operations with
+  | desc -> desc
+  | exception Not_found ->
+      may_lookup_error errors loc env (Unbound_operation (Ldot(l, s)))
+
 (* General forms of the lookup functions *)
 
 let lookup_module_path ~errors ~use ~loc ~load lid env : Path.t =
@@ -2756,7 +2815,7 @@ let lookup_label ~errors ~use ~loc lid env =
 let lookup_all_labels_from_type ~use ~loc ty_path env =
   match find_type_descrs ty_path env with
   | exception Not_found -> []
-  | (_, lbls) ->
+  | (_, lbls, _) ->
       List.map
         (fun lbl ->
            let use_fun () = use_label ~use ~loc env lbl in
@@ -2777,7 +2836,7 @@ let lookup_constructor ~errors ~use ~loc usage lid env =
 let lookup_all_constructors_from_type ~use ~loc usage ty_path env =
   match find_type_descrs ty_path env with
   | exception Not_found -> []
-  | (cstrs, _) ->
+  | (cstrs, _, _) ->
       List.map
         (fun cstr ->
            let use_fun () =
@@ -2785,6 +2844,12 @@ let lookup_all_constructors_from_type ~use ~loc usage ty_path env =
            in
            (cstr, use_fun))
         cstrs
+
+let lookup_operation ~errors ~use ~loc lid env =
+  match lid with
+  | Lident s -> lookup_ident_operation ~errors ~use ~loc s env
+  | Ldot(l, s) -> lookup_dot_operation ~errors ~use ~loc l s env
+  | Lapply _ -> assert false
 
 (* Lookup functions that do not mark the item as used or
    warn if it has alerts, and raise [Not_found] rather
@@ -2873,6 +2938,9 @@ let lookup_label ?(use=true) ~loc lid env =
 
 let lookup_all_labels_from_type ?(use=true) ~loc ty_path env =
   lookup_all_labels_from_type ~use ~loc ty_path env
+
+let lookup_operation ?(use=true) ~loc lid env =
+  lookup_operation ~errors:true ~use ~loc lid env
 
 let lookup_instance_variable ?(use=true) ~loc name env =
   match IdTbl.find_name_and_modes wrap_value ~mark:use name env.values with
@@ -3026,6 +3094,9 @@ and fold_constructors f =
     (fun cda acc -> f cda.cda_description acc)
 and fold_labels f =
   find_all_simple_list (fun env -> env.labels) (fun sc -> sc.comp_labels) f
+and fold_operations f =
+  find_all wrap_identity
+    (fun env -> env.operations) (fun sc -> sc.comp_operations) f
 and fold_types f =
   find_all wrap_identity
     (fun env -> env.types) (fun sc -> sc.comp_types)
@@ -3176,6 +3247,8 @@ let extract_constructors path env =
   fold_constructors (fun desc acc -> desc.cstr_name :: acc) path env []
 let extract_labels path env =
   fold_labels (fun desc acc -> desc.lbl_name :: acc) path env []
+let extract_operations path env =
+  fold_operations (fun name _ _ acc -> name :: acc) path env []
 let extract_classes path env =
   fold_classes (fun name _ _ acc -> name :: acc) path env []
 let extract_modtypes path env =
@@ -3225,6 +3298,9 @@ let report_lookup_error _loc env ppf = function
   | Unbound_label lid ->
       fprintf ppf "Unbound record field %a" !print_longident lid;
       spellcheck ppf extract_labels env lid;
+  | Unbound_operation lid ->
+      fprintf ppf "Unbound effect operation %a" !print_longident lid;
+      spellcheck ppf extract_operations env lid;
   | Unbound_class lid -> begin
       fprintf ppf "Unbound class %a" !print_longident lid;
       match find_cltype_by_name lid env with

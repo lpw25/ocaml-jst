@@ -116,11 +116,16 @@ let constructor_decl sub {cd_args; cd_res; _} =
   constructor_args sub cd_args;
   Option.iter (sub.typ sub) cd_res
 
+let operation_decl sub {od_args; od_res; _} =
+  List.iter (sub.typ sub) od_args;
+  Option.iter (sub.typ sub) od_res
+
 let type_kind sub = function
   | Ttype_abstract -> ()
   | Ttype_variant list -> List.iter (constructor_decl sub) list
   | Ttype_record list -> List.iter (label_decl sub) list
   | Ttype_open -> ()
+  | Ttype_effect list -> List.iter (operation_decl sub) list
 
 let type_declaration sub {typ_cstrs; typ_kind; typ_manifest; typ_params; _} =
   List.iter
@@ -173,6 +178,7 @@ let pat
   | Tpat_value p -> sub.pat sub (p :> pattern)
   | Tpat_exception p -> sub.pat sub p
   | Tpat_effect(_, p) -> sub.pat sub p
+  | Tpat_operation(_, _, l) -> List.iter (sub.pat sub) l
   | Tpat_or (p1, p2, _) ->
       sub.pat sub p1;
       sub.pat sub p2
@@ -276,7 +282,7 @@ let expr sub {exp_extra; exp_desc; exp_env; _} =
       sub.expr sub e
   | Texp_probe {handler;_} -> sub.expr sub handler
   | Texp_probe_is_enabled _ -> ()
-  | Texp_perform (_, exp) -> sub.expr sub exp
+  | Texp_perform (_, _, _, args) -> List.iter (sub.expr sub) args
 
 let package_type sub {pack_fields; _} =
   List.iter (fun (_, p) -> sub.typ sub p) pack_fields

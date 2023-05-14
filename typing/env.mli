@@ -59,7 +59,9 @@ val diff: t -> t -> Ident.t list
 val copy_local: from:t -> t -> t
 
 type type_descriptions =
-    constructor_description list * label_description list
+    constructor_description list
+    * label_description list
+    * operation_description list
 
 (* For short-paths *)
 type iter_cont
@@ -89,6 +91,7 @@ val find_strengthened_module:
 
 val find_ident_constructor: Ident.t -> t -> constructor_description
 val find_ident_label: Ident.t -> t -> label_description
+val find_ident_operation: Ident.t -> t -> operation_description
 
 val find_type_expansion:
     Path.t -> t -> type_expr list * type_expr * int
@@ -170,6 +173,7 @@ type lookup_error =
   | Unbound_type of Longident.t
   | Unbound_constructor of Longident.t
   | Unbound_label of Longident.t
+  | Unbound_operation of Longident.t
   | Unbound_module of Longident.t
   | Unbound_class of Longident.t
   | Unbound_modtype of Longident.t
@@ -248,6 +252,9 @@ val lookup_all_labels_from_type:
   ?use:bool -> loc:Location.t -> Path.t -> t ->
   (label_description * (unit -> unit)) list
 
+val lookup_operation:
+  ?use:bool -> loc:Location.t -> Longident.t -> t -> operation_description
+
 val lookup_instance_variable:
   ?use:bool -> loc:Location.t -> string -> t ->
   Path.t * Asttypes.mutable_flag * string * type_expr
@@ -284,7 +291,8 @@ val make_copy_of_types: t -> (t -> t)
 (* Insertion by identifier *)
 
 val add_value:
-    ?check:(string -> Warnings.t) -> ?mode:(Types.value_mode) ->
+    ?check:(string -> Warnings.t) ->
+    ?mode:(Types.value_mode) -> ?delayed:bool ->
     Ident.t -> value_description -> t -> t
 val add_type: check:bool -> Ident.t -> type_declaration -> t -> t
 val add_extension:

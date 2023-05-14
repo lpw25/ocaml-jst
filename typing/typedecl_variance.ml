@@ -151,10 +151,7 @@ let compute_variance_type env ~check (required, loc) decl tyl =
   let tvl = ref TypeMap.empty in
   (* Compute occurrences in the body *)
   let open Variance in
-  List.iter
-    (fun (cn,ty) ->
-      compute_variance env tvl (if cn then full else covariant) ty)
-    tyl;
+  List.iter (fun (vari, ty) -> compute_variance env tvl vari ty) tyl;
   (* Infer injectivity of constrained parameters *)
   if check_injectivity then
     List.iter
@@ -259,7 +256,12 @@ let compute_variance_type env ~check (required, loc) decl tyl =
       set May_weak (mem May_neg v) v)
     params required
 
-let add_false = List.map (fun ty -> false, ty)
+let add_covariant l = List.map (fun ty -> Variance.covariant, ty) l
+
+let field_variance ld =
+  match ld.ld_mutable with
+  | Mutable -> Variance.full
+  | Immutable -> Variance.covariant
 
 (* A parameter is constrained if it is either instantiated,
    or it is a variable appearing in another parameter *)
@@ -269,11 +271,17 @@ let constrained vars ty =
   | _ -> true
 
 let for_constr = function
-  | Types.Cstr_tuple l -> add_false l
+  | Types.Cstr_tuple l -> add_covariant l
   | Types.Cstr_record l ->
-      List.map
-        (fun {Types.ld_mutable; ld_type} -> (ld_mutable = Mutable, ld_type))
-        l
+      List.map (fun ld -> (field_variance ld, ld.ld_type)) l
+
+let for_operation od =
+  let res =
+    match od.od_res with
+    | None -> []
+    | Some res -> [Variance.contravariant, res]
+  in
+  res @ add_covariant od.od_args
 
 let compute_variance_gadt env ~check (required, loc as rloc) decl
     (tl, ret_type_opt) =
@@ -319,7 +327,7 @@ let compute_variance_decl env ~check decl (required, _ as rloc) =
   let mn =
     match decl.type_manifest with
       None -> []
-    | Some ty -> [false, ty]
+    | Some ty -> [Variance.covariant, ty]
   in
   match decl.type_kind with
     Type_abstract | Type_open ->
@@ -327,8 +335,7 @@ let compute_variance_decl env ~check decl (required, _ as rloc) =
   | Type_variant tll ->
       if List.for_all (fun c -> c.Types.cd_res = None) tll then
         compute_variance_type env ~check rloc decl
-          (mn @ List.flatten (List.map (fun c -> for_constr c.Types.cd_args)
-                                tll))
+          (mn @ List.concat_map (fun c -> for_constr c.Types.cd_args) tll)
       else begin
         let mn =
           List.map (fun (_,ty) -> (Types.Cstr_tuple [ty],None)) mn in
@@ -344,8 +351,11 @@ let compute_variance_decl env ~check decl (required, _ as rloc) =
       end
   | Type_record (ftl, _) ->
       compute_variance_type env ~check rloc decl
-        (mn @ List.map (fun {Types.ld_mutable; ld_type} ->
-             (ld_mutable = Mutable, ld_type)) ftl)
+        (mn @ List.map (fun ld -> (field_variance ld, ld.ld_type)) ftl)
+  | Type_effect otl ->
+      compute_variance_type env ~check rloc decl
+        (mn @ List.concat_map for_operation otl)
+      
 
 let is_hash id =
   let s = Ident.name id in

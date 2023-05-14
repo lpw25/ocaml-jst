@@ -236,6 +236,22 @@ let type_declaration sub decl =
     ?manifest:(Option.map (sub.typ sub) decl.typ_manifest)
     (map_loc sub decl.typ_name)
 
+let operation_declaration ~first sub od =
+  let loc = sub.location sub od.od_loc in
+  let attrs = sub.attributes sub od.od_attributes in
+  let attrs =
+    if not first then attrs
+    else begin
+      let str = mknoloc "extension.effect_type" in
+      let attr = Attr.mk ~loc:Location.none str (PStr []) in
+      attr :: attrs
+    end
+  in
+  let args = Pcstr_tuple (List.map (sub.typ sub) od.od_args) in
+  let res = Option.map (sub.typ sub) od.od_res in
+  let name = map_loc sub od.od_name in
+  Type.constructor ~loc ~attrs ~args ?res name
+
 let type_kind sub tk = match tk with
   | Ttype_abstract -> Ptype_abstract
   | Ttype_variant list ->
@@ -243,6 +259,14 @@ let type_kind sub tk = match tk with
   | Ttype_record list ->
       Ptype_record (List.map (sub.label_declaration sub) list)
   | Ttype_open -> Ptype_open
+  | Ttype_effect list -> begin
+      match list with
+      | [] -> assert false
+      | first :: rest ->
+          let first = operation_declaration ~first:true sub first in
+          let rest = List.map (operation_declaration ~first:false sub) rest in
+          Ptype_variant (first :: rest)
+    end
 
 let constructor_arguments sub = function
    | Cstr_tuple l -> Pcstr_tuple (List.map (sub.typ sub) l)
@@ -299,6 +323,10 @@ let pattern : type k . _ -> k T.general_pattern -> _ = fun sub pat ->
         let str = mknoloc "extension.effect" in
         let payload = [Str.eval (Exp.constant (Const.string n))] in
         let attr = Attr.mk ~loc:Location.none str (PStr payload) in
+        attr :: attrs
+    | Tpat_operation _ ->
+        let str = mknoloc "extension.operation" in
+        let attr = Attr.mk ~loc:Location.none str (PStr []) in
         attr :: attrs
     | _ -> attrs
   in
@@ -359,6 +387,17 @@ let pattern : type k . _ -> k T.general_pattern -> _ = fun sub pat ->
 
     | Tpat_exception p -> Ppat_exception (sub.pat sub p)
     | Tpat_effect(_, p) -> Ppat_exception (sub.pat sub p)
+    | Tpat_operation(lid, _, args) ->
+        Ppat_construct (map_loc sub lid,
+          (match args with
+            | [] -> None
+            | [arg] -> Some (sub.pat sub arg)
+            | args ->
+                Some
+                  (Pat.tuple ~loc
+                     (List.map (sub.pat sub) args)
+                  )
+          ))
     | Tpat_value p -> (sub.pat sub (p :> pattern)).ppat_desc
     | Tpat_or (p1, p2, _) -> Ppat_or (sub.pat sub p1, sub.pat sub p2)
   in
@@ -573,13 +612,22 @@ let expression sub exp =
                      , [])
                ; pstr_loc = loc
                }]))
-    | Texp_perform(n, e) ->
+    | Texp_perform(n, lid, _, args) ->
+        let arg =
+          match args with
+          | [] -> None
+          | [ arg ] -> Some (sub.expr sub arg)
+          | args ->
+              Some
+                (Exp.tuple ~loc (List.map (sub.expr sub) args))
+        in
+        let constr = Exp.construct ~loc (map_loc sub lid) arg in
         let payload = [Str.eval (Exp.constant (Const.string n))] in
         let str = mknoloc "extension.perform" in
         let ext =
           Exp.mk ~loc:Location.none (Pexp_extension(str, PStr payload))
         in
-        Pexp_apply(ext, [Nolabel, sub.expr sub e])
+        Pexp_apply(ext, [Nolabel, constr])
   in
   List.fold_right (exp_extra sub) exp.exp_extra
     (Exp.mk ~loc ~attrs desc)

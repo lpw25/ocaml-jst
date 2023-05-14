@@ -370,7 +370,7 @@ and print_out_type_3 mode ppf =
       pp_print_char ppf ')';
       pp_close_box ppf ()
   | Otyp_abstract | Otyp_open
-  | Otyp_sum _ | Otyp_manifest (_, _) -> ()
+  | Otyp_sum _ | Otyp_manifest (_, _) | Otyp_effect _ -> ()
   | Otyp_record lbls -> print_record_decl ppf lbls
   | Otyp_module (p, n, tyl) ->
       fprintf ppf "@[<1>(module %a" print_ident p;
@@ -746,6 +746,9 @@ and print_out_type_decl kwd ppf td =
   | Otyp_open ->
       fprintf ppf " =%a .."
         print_private td.otype_private
+  | Otyp_effect ops ->
+      fprintf ppf " = effect_@;<1 2>%a"
+        (print_list print_out_operation (fun ppf -> fprintf ppf "@ | ")) ops
   | ty ->
       fprintf ppf " =%a@;<1 2>%a"
         print_private td.otype_private
@@ -781,6 +784,25 @@ and print_out_constr ppf (name, tyl,ret_type_opt) =
           fprintf ppf "@[<2>%s :@ %a -> %a@]" name
             (print_typlist print_simple_out_type " *")
             tyl print_simple_out_type ret_type
+      end
+
+and print_out_operation ppf (name, args, res) =
+  match res with
+  | None -> begin
+      match args with
+      | [] -> fprintf ppf "@[<2>%s : .@]" name
+      | _ ->
+          fprintf ppf "@[<2>%s :@ %a -> .@]" name
+            (print_typlist print_simple_out_type " *") args
+      end
+  | Some res -> begin
+      match args with
+      | [] ->
+          fprintf ppf "@[<2>%s :@ %a@]" name print_simple_out_type res
+      | _ ->
+          fprintf ppf "@[<2>%s :@ %a -> %a@]" name
+            (print_typlist print_simple_out_type " *")
+            args print_simple_out_type res
       end
 
 and print_out_extension_constructor ppf ext =
@@ -824,6 +846,7 @@ and print_out_type_extension ppf te =
     te.otyext_constructors
 
 let out_constr = ref print_out_constr
+let out_operation = ref print_out_operation
 let _ = out_module_type := print_out_module_type
 let _ = out_signature := print_out_signature
 let _ = out_sig_item := print_out_sig_item

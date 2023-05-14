@@ -62,6 +62,8 @@ module Simple = struct
         (Longident.t loc * label_description * pattern) list * closed_flag
     | `Array of pattern list
     | `Lazy of pattern
+    | `Operation of
+        Longident.t loc * operation_description * pattern list
   ]
 
   type pattern = view pattern_data
@@ -106,6 +108,8 @@ module General = struct
     | Tpat_array ps -> `Array ps
     | Tpat_or (p, q, row_desc) -> `Or (p, q, row_desc)
     | Tpat_lazy p -> `Lazy p
+    | Tpat_operation(op, op_descr, args) ->
+        `Operation (op, op_descr, args)
 
   let view p : pattern =
     { p with pat_desc = view_desc p.pat_desc }
@@ -125,6 +129,8 @@ module General = struct
     | `Array ps -> Tpat_array ps
     | `Or (p, q, row_desc) -> Tpat_or (p, q, row_desc)
     | `Lazy p -> Tpat_lazy p
+    | `Operation (op, op_descr, args) ->
+        Tpat_operation (op, op_descr, args)
 
   let erase p : Typedtree.pattern =
     { p with pat_desc = erase_desc p.pat_desc }
@@ -151,6 +157,7 @@ module Head : sig
           type_row : unit -> row_desc; }
     | Array of int
     | Lazy
+    | Operation of operation_description
 
   type t = desc pattern_data
 
@@ -178,6 +185,7 @@ end = struct
              hence the (unit -> ...) delay *)
     | Array of int
     | Lazy
+    | Operation of operation_description
 
   type t = desc pattern_data
 
@@ -209,6 +217,8 @@ end = struct
           Record lbls, pats
       | `Lazy p ->
           Lazy, [p]
+      | `Operation (_, op, args) ->
+          Operation op, args
     in
     let desc, pats = deconstruct_desc q.pat_desc in
     { q with pat_desc = desc }, pats
@@ -222,6 +232,7 @@ end = struct
       | Record l -> List.length l
       | Variant { has_arg; _ } -> if has_arg then 1 else 0
       | Lazy -> 1
+      | Operation o -> o.op_arity
 
   let to_omega_pattern t =
     let pat_desc =
@@ -246,6 +257,9 @@ end = struct
             ) lbls
           in
           Tpat_record (lst, Closed)
+      | Operation o ->
+          let lid_loc = mkloc (Longident.Lident o.op_name) in
+          Tpat_operation (lid_loc, o, omegas o.op_arity)
     in
     { t with
       pat_desc;

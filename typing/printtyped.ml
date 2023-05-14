@@ -266,6 +266,9 @@ and pattern : type k . _ -> _ -> k general_pattern -> unit = fun i ppf x ->
   | Tpat_effect(n, p) ->
       line i ppf "Tpat_effect \"%s\"\n" n;
       pattern i ppf p;
+  | Tpat_operation(li, _, pl) ->
+      line i ppf "Tpat_operation %a\n" fmt_longident li;
+      list i pattern ppf pl;
   | Tpat_value p ->
       line i ppf "Tpat_value\n";
       pattern i ppf (p :> pattern);
@@ -483,9 +486,9 @@ and expression i ppf x =
       expression i ppf handler;
   | Texp_probe_is_enabled {name} ->
       line i ppf "Texp_probe_is_enabled \"%s\"\n" name;
-  | Texp_perform(n, e) ->
-      line i ppf "Texp_perform \"%s\"\n" n;
-      expression i ppf e
+  | Texp_perform(n, li, _, el) ->
+      line i ppf "Texp_perform \"%s\" %a\n" n fmt_longident li;
+      list i expression ppf el
 
 and value_description i ppf x =
   line i ppf "value_description %a %a\n" fmt_ident x.val_id fmt_location
@@ -528,6 +531,9 @@ and type_kind i ppf x =
       list (i+1) label_decl ppf l;
   | Ttype_open ->
       line i ppf "Ttype_open\n"
+  | Ttype_effect l ->
+      line i ppf "Ttype_effect\n";
+      list (i+1) operation_decl ppf l;
 
 and type_extension i ppf x =
   line i ppf "type_extension\n";
@@ -935,6 +941,14 @@ and label_decl i ppf {ld_id; ld_name = _; ld_mutable; ld_type; ld_loc;
   line (i+1) ppf "%a\n" fmt_mutable_flag ld_mutable;
   line (i+1) ppf "%a" fmt_ident ld_id;
   core_type (i+1) ppf ld_type
+
+and operation_decl i ppf {od_id; od_name = _; od_args; od_res; od_loc;
+                      od_attributes} =
+  line i ppf "%a\n" fmt_location od_loc;
+  attributes i ppf od_attributes;
+  line (i+1) ppf "%a" fmt_ident od_id;
+  list (i+1) core_type ppf od_args;
+  option (i+1) core_type ppf od_res
 
 and longident_x_pattern i ppf (li, _, p) =
   line i ppf "%a\n" fmt_longident li;

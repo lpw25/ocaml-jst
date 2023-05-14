@@ -71,6 +71,11 @@ val complete_constrs :
     constructor_tag list ->
     constructor_description list
 
+val complete_operations :
+    operation_description pattern_data ->
+    int list ->
+    operation_description list
+
 (** [ppat_of_type] builds an untyped pattern from its expected type,
     for explosion of wildcard patterns in Typecore.type_pat.
 

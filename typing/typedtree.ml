@@ -25,10 +25,6 @@ type partial = Partial | Total
 type attribute = Parsetree.attribute
 type attributes = attribute list
 
-type effect_context_var =
-  | Known of effect_context
-  | Unknown of effect_context option ref
-
 type value = Value_pattern
 type computation = Computation_pattern
 
@@ -76,10 +72,14 @@ and 'k pattern_desc =
       value pattern_desc
   | Tpat_array : value general_pattern list -> value pattern_desc
   | Tpat_lazy : value general_pattern -> value pattern_desc
+  | Tpat_operation :
+      Longident.t loc * operation_description * value general_pattern list
+      -> value pattern_desc
   (* computation patterns *)
   | Tpat_value : tpat_value_argument -> computation pattern_desc
   | Tpat_exception : value general_pattern -> computation pattern_desc
-  | Tpat_effect : string * value general_pattern -> computation pattern_desc
+  | Tpat_effect :
+      string * value general_pattern -> computation pattern_desc
   (* generic constructions *)
   | Tpat_or :
       'k general_pattern * 'k general_pattern * row_desc option ->
@@ -176,7 +176,8 @@ and expression_desc =
   | Texp_open of open_declaration * expression
   | Texp_probe of { name:string; handler:expression; }
   | Texp_probe_is_enabled of { name:string }
-  | Texp_perform of string * expression
+  | Texp_perform of
+      string * Longident.t loc * operation_description * expression list
 
 and ident_kind = Id_value | Id_prim of Types.alloc_mode option
 
@@ -565,6 +566,7 @@ and type_kind =
   | Ttype_variant of constructor_declaration list
   | Ttype_record of label_declaration list
   | Ttype_open
+  | Ttype_effect of operation_declaration list
 
 and label_declaration =
     {
@@ -589,6 +591,16 @@ and constructor_declaration =
 and constructor_arguments =
   | Cstr_tuple of core_type list
   | Cstr_record of label_declaration list
+
+and operation_declaration =
+    {
+     od_id: Ident.t;
+     od_name: string loc;
+     od_args: core_type list;
+     od_res: core_type option;
+     od_loc: Location.t;
+     od_attributes: attribute list;
+    }
 
 and type_extension =
   {
@@ -705,6 +717,7 @@ let rec classify_pattern_desc : type k . k pattern_desc -> k pattern_category =
   | Tpat_any -> Value
   | Tpat_var _ -> Value
   | Tpat_constant _ -> Value
+  | Tpat_operation _ -> Value
 
   | Tpat_value _ -> Computation
   | Tpat_exception _ -> Computation
@@ -740,6 +753,7 @@ let shallow_iter_pattern_desc
   | Tpat_value p -> f.f p
   | Tpat_exception p -> f.f p
   | Tpat_effect(_, p) -> f.f p
+  | Tpat_operation(_, _, patl) -> List.iter f.f patl
   | Tpat_or(p1, p2, _) -> f.f p1; f.f p2
 
 type pattern_transformation =
@@ -767,6 +781,8 @@ let shallow_map_pattern_desc
   | Tpat_value p -> Tpat_value (f.f p)
   | Tpat_exception p -> Tpat_exception (f.f p)
   | Tpat_effect(s, p) -> Tpat_effect (s, f.f p)
+  | Tpat_operation(lid, op, pats) ->
+      Tpat_operation(lid, op, List.map f.f pats)
   | Tpat_or (p1,p2,path) ->
       Tpat_or (f.f p1, f.f p2, path)
 

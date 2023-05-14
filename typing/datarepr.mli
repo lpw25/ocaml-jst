@@ -28,6 +28,8 @@ val labels_of_type:
 val constructors_of_type:
   current_unit:string -> Path.t -> type_declaration ->
   (Ident.t * constructor_description) list
+val operations_of_type:
+  Path.t -> type_declaration -> (Ident.t * operation_description) list
 
 
 exception Constr_not_found

@@ -393,6 +393,11 @@ let iter_type_expr_kind f = function
       List.iter (fun d -> f d.ld_type) lbls
   | Type_open ->
       ()
+  | Type_effect ops ->
+      List.iter
+        (fun od ->
+          List.iter f od.od_args;
+          Option.iter f od.od_res) ops
 
 
 let type_iterators =
@@ -1348,6 +1353,26 @@ module Value_mode = struct
     let r_as_g = Alloc_mode.newvar () in
     Alloc_mode.submode_exn r_as_g r_as_l;
     { r_as_l; r_as_g }
+
+  let newvar_above t =
+    let r_as_l, changed1 = Alloc_mode.newvar_above t.r_as_l in
+    let r_as_g, changed2 = Alloc_mode.newvar_above t.r_as_g in
+    if changed1 || changed2 then begin
+      Alloc_mode.submode_exn r_as_g r_as_l;
+      { r_as_l; r_as_g }, true
+    end else begin
+      t, false
+    end
+
+  let newvar_below t =
+    let r_as_l, changed1 = Alloc_mode.newvar_below t.r_as_l in
+    let r_as_g, changed2 = Alloc_mode.newvar_below t.r_as_g in
+    if changed1 || changed2 then begin
+      Alloc_mode.submode_exn r_as_g r_as_l;
+      { r_as_l; r_as_g }, true
+    end else begin
+      t, false
+    end
 
   let check_const t =
     match Alloc_mode.check_const t.r_as_l with

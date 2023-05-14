@@ -47,6 +47,18 @@ type variant_mismatch =
   | Constructor_names of int * Ident.t * Ident.t
   | Constructor_missing of position * Ident.t
 
+type operation_mismatch =
+  | Type
+  | Arity
+  | Returns of position
+
+type effect_mismatch =
+  | Operation_mismatch of Types.operation_declaration
+                            * Types.operation_declaration
+                            * operation_mismatch
+  | Operation_names of int * Ident.t * Ident.t
+  | Operation_missing of position * Ident.t
+
 type extension_constructor_mismatch =
   | Constructor_privacy
   | Constructor_mismatch of Ident.t
@@ -63,6 +75,7 @@ type type_mismatch =
   | Variance
   | Record_mismatch of record_mismatch
   | Variant_mismatch of variant_mismatch
+  | Effect_mismatch of effect_mismatch
   | Unboxed_representation of position
   | Immediate of Type_immediacy.Violation.t
 

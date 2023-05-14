@@ -849,8 +849,8 @@ let rec expression : Typedtree.expression -> term_judg =
     | Texp_probe {handler} ->
       expression handler << Dereference
     | Texp_probe_is_enabled _ -> empty
-    | Texp_perform(_, e) ->
-      expression e << Dereference
+    | Texp_perform(_, _, _, exprs) ->
+      list expression exprs << Dereference
 
 and comprehension comp_types=
   List.concat_map (fun {clauses; guard}  ->
@@ -1255,6 +1255,7 @@ and is_destructuring_pattern : type k . k general_pattern -> bool =
     | Tpat_record (_, _) -> true
     | Tpat_array _ -> true
     | Tpat_lazy _ -> true
+    | Tpat_operation _ -> true
     | Tpat_value pat -> is_destructuring_pattern (pat :> pattern)
     | Tpat_exception _ -> false
     | Tpat_effect _ -> false

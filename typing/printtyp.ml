@@ -1292,6 +1292,12 @@ let rec tree_of_type_decl id decl =
         cstrs
   | Type_record(l, _rep) ->
       List.iter (fun l -> mark_loops l.ld_type) l
+  | Type_effect ops ->
+      List.iter
+        (fun o ->
+          List.iter mark_loops o.od_args;
+          Option.iter mark_loops o.od_res)
+        ops
   | Type_open -> ()
   end;
 
@@ -1312,6 +1318,7 @@ let rec tree_of_type_decl id decl =
           List.exists (fun cd -> cd.cd_res <> None) tll
       | Type_open ->
           decl.type_manifest = None
+      | Type_effect _ -> false
     in
     let vari =
       List.map2
@@ -1360,6 +1367,9 @@ let rec tree_of_type_decl id decl =
     | Type_open ->
         tree_of_manifest Otyp_open,
         decl.type_private
+    | Type_effect ops ->
+        tree_of_manifest (Otyp_effect (List.map tree_of_operation ops)),
+        Public
   in
     { otype_name = name;
       otype_params = args;
@@ -1396,6 +1406,12 @@ and tree_of_label l =
   in
   (Ident.name l.ld_id, gom, tree_of_typexp false l.ld_type)
 
+and tree_of_operation o =
+  let name = Ident.name o.od_id in
+  let args = tree_of_typlist false o.od_args in
+  let res = Option.map (tree_of_typexp false) o.od_res in
+  (name, args, res)
+
 let constructor ppf c =
   reset_except_context ();
   !Oprint.out_constr ppf (tree_of_constructor c)
@@ -1403,6 +1419,10 @@ let constructor ppf c =
 let label ppf l =
   reset_except_context ();
   !Oprint.out_label ppf (tree_of_label l)
+
+let operation ppf c =
+  reset_except_context ();
+  !Oprint.out_operation ppf (tree_of_operation c)
 
 let tree_of_type_declaration id decl rs =
   Osig_type (tree_of_type_decl id decl, tree_of_rec rs)

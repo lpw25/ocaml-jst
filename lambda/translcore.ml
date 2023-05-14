@@ -877,13 +877,16 @@ and transl_exp0 ~in_new_scope ~scopes e =
       Lprim(Pprobe_is_enabled {name}, [], of_location ~scopes e.exp_loc)
     else
       lambda_unit
-  | Texp_perform(name, arg) ->
-      let tag = Btype.hash_variant name in
+  | Texp_perform(name, _, op, args) ->
+      let hash = Btype.hash_variant name in
       let loc = of_location ~scopes e.exp_loc in
-      let arg = transl_exp ~scopes arg in
+      let args = transl_list ~scopes args in
       let block =
         Lprim(Pmakeblock(1, Mutable, None, alloc_heap),
-              [Lconst(const_int tag); Lconst(const_int 0); arg], loc)
+              Lconst(const_int hash)
+              :: Lconst(const_int 0)
+              :: Lconst(const_int op.op_tag)
+              :: args, loc)
       in
       Lprim(Praise Raise_notrace, [block], loc)
 
