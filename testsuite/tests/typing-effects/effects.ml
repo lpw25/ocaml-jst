@@ -2,11 +2,13 @@
    flags += "-extension effects"
    * expect *)
 
-type 'a state
+type 'a state = effect_
+  | Set : 'a -> unit
+  | Get : 'a
 
-let set : 'a -> unit [state: 'a state] = fun _ -> ()
+let set = fun x -> perform_ state Set x
 [%%expect{|
-type 'a state
+type 'a state = effect_ Set : 'a -> unit | Get : 'a
 val set : 'a -> unit [state: 'a state] = <fun>
 |}]
 
@@ -195,15 +197,18 @@ let tuple_test2 p =
 val tuple_test2 : bool -> 'a -> unit [state: 'a state] = <fun>
 |}]
 
-let fail msg = perform_ fail msg
+type 'a exn = effect_ Raise : 'a -> .
+
+let fail msg = perform_ fail Raise msg
 [%%expect{|
-val fail : 'a -> 'b [fail: 'a] = <fun>
+type 'a exn = effect_ Raise : 'a -> .
+val fail : 'a -> 'b [fail: 'a exn] = <fun>
 |}]
 
 let handle_bad (local_ f) =
   match f () with
   | x -> x
-  | effect_ fail msg -> String.length msg
+  | effect_ fail Raise msg -> String.length msg
 [%%expect{|
 Line 2, characters 8-9:
 2 |   match f () with
@@ -211,98 +216,200 @@ Line 2, characters 8-9:
 Error: The value f is local, so cannot be used inside an effect handler
 |}]
 
-let handle (f : unit -> int [fail: string]) =
+let handle (f : unit -> int [fail: string exn]) =
   match f () with
   | x -> x
-  | effect_ fail msg -> String.length msg
+  | effect_ fail Raise msg -> String.length msg
 let five = handle (fun () -> fail "hello")
 [%%expect{|
-val handle : (unit -> int [fail: string]) -> int = <fun>
+val handle : (unit -> int [fail: string exn]) -> int = <fun>
 val five : int = 5
 |}]
 
-let handle_missing (f : unit -> int [fail: bool]) =
+let handle_missing (f : unit -> int [fail: bool exn]) =
   match f () with
   | x -> x
-  | effect_ fail true -> 0
+  | effect_ fail Raise true -> 0
 [%%expect{|
-Lines 2-4, characters 2-26:
+Lines 2-4, characters 2-32:
 2 | ..match f () with
 3 |   | x -> x
-4 |   | effect_ fail true -> 0
+4 |   | effect_ fail Raise true -> 0
 Warning 8 [partial-match]: this pattern-matching is not exhaustive.
 Here is an example of a case that is not matched:
-false
-val handle_missing : (unit -> int [fail: bool]) -> int = <fun>
+Raise false
+val handle_missing : (unit -> int [fail: bool exn]) -> int = <fun>
 |}]
 
-let uncaught = handle_missing (fun () -> perform_ fail false)
+let handle_missing2 (f : unit -> int [counter: int state]) =
+  match f () with
+  | x -> x
+  | effect_ counter Set i -> i
+[%%expect{|
+Lines 2-4, characters 2-30:
+2 | ..match f () with
+3 |   | x -> x
+4 |   | effect_ counter Set i -> i
+Warning 8 [partial-match]: this pattern-matching is not exhaustive.
+Here is an example of a case that is not matched:
+Get
+val handle_missing2 : (unit -> int [counter: int state]) -> int = <fun>
+|}]
+
+let uncaught = handle_missing (fun () -> perform_ fail Raise false)
 [%%expect{|
 Exception: Match_failure ("", 2, 2).
 |}]
 
-let handle_or1 (f : unit -> int [fail: int]) =
+let handle_or1 (f : unit -> int [fail: int exn]) =
   match f () with
-  | x | effect_ fail x -> x + 2
+  | x | effect_ fail Raise x -> x + 2
 let seven = handle_or1 (fun () -> fail 5)
 let eight = handle_or1 (fun () -> 6)
 [%%expect{|
-val handle_or1 : (unit -> int [fail: int]) -> int = <fun>
+val handle_or1 : (unit -> int [fail: int exn]) -> int = <fun>
 val seven : int = 7
 val eight : int = 8
 |}]
 
-let handle_or2 (f : unit -> int [fail: string]) =
+let handle_or2 (f : unit -> int [fail: string exn]) =
   match f () with
   | x -> "hello"
-  | effect_ fail s | exception (Failure s) -> s ^ "!"
+  | effect_ fail Raise s | exception (Failure s) -> s ^ "!"
 let eff = handle_or2 (fun () -> fail "eff")
 let exn = handle_or2 (fun () -> failwith "exn")
 [%%expect{|
-val handle_or2 : (unit -> int [fail: string]) -> string = <fun>
+val handle_or2 : (unit -> int [fail: string exn]) -> string = <fun>
 val eff : string = "eff!"
 val exn : string = "exn!"
 |}]
 
-let handle_or3 (f : unit -> string [fail: string]) =
+let handle_or3 (f : unit -> string [fail: string exn]) =
   match f () with
-  | s | effect_ fail s | exception (Failure s) -> s ^ "?"
+  | s | effect_ fail Raise s | exception (Failure s) -> s ^ "?"
 let a = handle_or3 (fun () -> "a")
 let b = handle_or3 (fun () -> fail "b")
 let c = handle_or3 (fun () -> failwith "c")
 [%%expect{|
-val handle_or3 : (unit -> string [fail: string]) -> string = <fun>
+val handle_or3 : (unit -> string [fail: string exn]) -> string = <fun>
 val a : string = "a?"
 val b : string = "b?"
 val c : string = "c?"
 |}]
 
-let handle_multiple (f : unit -> int [other: bool; fail: string]) =
+let handle_multiple (f : unit -> int [other: bool exn; fail: string exn]) =
   match f () with
   | x -> x
-  | effect_ fail msg -> String.length msg
-  | effect_ other true -> -1
-  | effect_ other false -> -2
+  | effect_ fail Raise msg -> String.length msg
+  | effect_ other Raise true -> -1
+  | effect_ other Raise false -> -2
 let five = handle_multiple (fun () -> fail "hello")
-let minus_one = handle_multiple (fun () -> perform_ other true)
-let minus_two = handle_multiple (fun () -> perform_ other false)
+let minus_one = handle_multiple (fun () -> perform_ other Raise true)
+let minus_two = handle_multiple (fun () -> perform_ other Raise false)
 [%%expect{|
-val handle_multiple : (unit -> int [other: bool; fail: string]) -> int =
-  <fun>
+val handle_multiple :
+  (unit -> int [other: bool exn; fail: string exn]) -> int = <fun>
 val five : int = 5
 val minus_one : int = -1
 val minus_two : int = -2
 |}]
 
-let handle_some (f : unit -> int [other: int; fail: string]) =
+let handle_some (f : unit -> int [other: int exn; fail: string exn]) =
   match f () with
   | x -> x
-  | effect_ other n -> n
+  | effect_ other Raise n -> n
 let five = handle (fun () -> (handle_some (fun () -> fail "hello")))
-let six = handle (fun () -> (handle_some (fun () -> perform_ other 6)))
+let six = handle (fun () -> (handle_some (fun () -> perform_ other Raise 6)))
 [%%expect{|
 val handle_some :
-  (unit -> int [other: int; fail: string]) -> int [fail: string] = <fun>
+  (unit -> int [other: int exn; fail: string exn]) -> int [fail: string exn] =
+  <fun>
 val five : int = 5
 val six : int = 6
+|}]
+
+
+let rec find (local_ p) = function
+  | [] -> perform_ not_found Raise ()
+  | x :: xs ->
+      if p x then x
+      else find p xs
+[%%expect{|
+val find : local_ ('a -> bool) -> 'a list -> 'a [not_found: unit exn] = <fun>
+|}]
+
+let r = ref None
+
+let rec find_bad (local_ p) = function
+  | [] -> perform_ not_found Raise ()
+  | x :: xs ->
+      r := Some (find_bad);
+      if p x then x
+      else find_bad p xs
+[%%expect{|
+val r : '_weak1 option ref = {contents = None}
+Lines 3-8, characters 17-24:
+3 | .................(local_ p) = function
+4 |   | [] -> perform_ not_found Raise ()
+5 |   | x :: xs ->
+6 |       r := Some (find_bad);
+7 |       if p x then x
+8 |       else find_bad p xs
+Error: This expresion has effects [not_found: unit exn]
+       which escape the current region
+|}]
+
+type 'a finder =
+  { find : local_ ('a -> bool) -> 'a list -> 'a [not_found : unit exn] }
+
+let r : int finder option ref = ref None
+
+let rec find_bad (local_ p) = function
+  | [] -> perform_ not_found Raise ()
+  | x :: xs ->
+      r := Some {find = find_bad};
+      if p x then x
+      else find_bad p xs
+[%%expect{|
+type 'a finder = {
+  find : local_ ('a -> bool) -> 'a list -> 'a [not_found: unit exn];
+}
+val r : int finder option ref = {contents = None}
+Lines 6-11, characters 17-24:
+ 6 | .................(local_ p) = function
+ 7 |   | [] -> perform_ not_found Raise ()
+ 8 |   | x :: xs ->
+ 9 |       r := Some {find = find_bad};
+10 |       if p x then x
+11 |       else find_bad p xs
+Error: This expresion has effects [not_found: unit exn]
+       which escape the current region
+|}]
+
+let rec find_weird : _ [not_found : unit exn] =
+  fun (local_ p) -> function
+    | [] -> perform_ not_found Raise ()
+    | x :: xs ->
+        r := Some {find = find_weird};
+        if p x then x
+        else find_weird p xs
+[%%expect{|
+val find_weird :
+  local_ (int -> bool) -> int list -> int [not_found: unit exn] = <fun>
+|}]
+
+let rec find_bad : _ [not_found : int exn] =
+  fun (local_ p) -> function
+    | [] -> perform_ not_found Raise 7
+    | x :: xs ->
+        r := Some {find = find_bad};
+        if p x then x
+        else find_bad p xs
+[%%expect{|
+Line 5, characters 26-34:
+5 |         r := Some {find = find_bad};
+                              ^^^^^^^^
+Error: This expression has effect [not_found: int exn]
+       but an expression was expected with effect [not_found: unit exn]
+       Types for effect not_found are incompatible
 |}]
