@@ -214,7 +214,12 @@ and immediate_subtypes_effect_context_option eff =
   match eff with
   | None -> []
   | Some eff ->
-      List.fold_left (fun acc (_, ty) -> ty :: acc) [] eff.effects
+      List.fold_left
+        (fun acc (_, tyo) ->
+          match tyo with
+          | None -> acc
+          | Some ty -> ty :: acc)
+        [] eff.effects
 
 and immediate_subtypes_object_row acc ty = match (Ctype.repr ty).desc with
   | Tnil -> acc

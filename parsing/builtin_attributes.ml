@@ -447,7 +447,8 @@ let has_include_functor attr =
 
 let effect_of_expression pexp =
   match pexp.pexp_desc with
-  | Pexp_extension({txt=name}, PTyp typ) -> Some (name, typ)
+  | Pexp_extension({txt=name}, PTyp typ) -> Some (name, Some typ)
+  | Pexp_extension({txt=name}, PStr []) -> Some (name, None)
   | _ -> None
 
 let effect_context_of_payload = function
@@ -506,3 +507,47 @@ let has_operation attrs =
   else
     Ok false
 
+let outer_adjustment_item_of_expression pexp =
+  match pexp.pexp_desc with
+  | Pexp_extension({txt=name}, PPat(pat, None)) -> begin
+      match pat.ppat_desc with
+      | Ppat_any -> Some (name, None)
+      | Ppat_var v -> Some (name, Some v)
+      | _ -> None
+    end
+  | _ -> None
+
+let outer_adjustment_list_of_payload = function
+  | PStr[{pstr_desc=Pstr_eval({pexp_desc=Pexp_tuple pexps},_)}] ->
+      List.filter_map outer_adjustment_item_of_expression pexps
+  | PStr[{pstr_desc=Pstr_eval({pexp_desc=Pexp_extension _} as pexp,_)}] ->
+      List.filter_map outer_adjustment_item_of_expression [pexp]
+  | _ -> []  
+
+let inner_adjustment_item_of_expression pexp =
+  match pexp.pexp_desc with
+  | Pexp_extension({txt=name}, PPat(pat, None)) -> begin
+      match pat.ppat_desc with
+      | Ppat_var v -> Some (name, v)
+      | _ -> None
+    end
+  | _ -> None
+
+let inner_adjustment_list_of_payload = function
+  | PStr[{pstr_desc=Pstr_eval({pexp_desc=Pexp_tuple pexps},_)}] ->
+      List.filter_map inner_adjustment_item_of_expression pexps
+  | PStr[{pstr_desc=Pstr_eval({pexp_desc=Pexp_extension _} as pexp,_)}] ->
+      List.filter_map inner_adjustment_item_of_expression [pexp]
+  | _ -> []  
+
+let effect_adjustment_of_payload payload =
+    match payload with
+  | PStr [{pstr_desc=Pstr_eval({pexp_desc=
+      Pexp_tuple([{pexp_desc=Pexp_extension({txt="outer"}, outer)};
+                  {pexp_desc=Pexp_extension({txt="inner"}, inner)}])}, [])}] ->
+      if not (Clflags.Extension.is_enabled Effects) then
+        Error `Disabled
+      else
+        Ok (outer_adjustment_list_of_payload outer,
+            inner_adjustment_list_of_payload inner)
+  | _ -> Error `Payload

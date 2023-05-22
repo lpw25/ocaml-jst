@@ -577,6 +577,7 @@ rule token = parse
   | "**" symbolchar * as op
             { INFIXOP4 op }
   | '%'     { PERCENT }
+  | '/'     { DIV }
   | ['*' '/' '%'] symbolchar * as op
             { INFIXOP3 op }
   | '#' symbolchar_or_hash + as op

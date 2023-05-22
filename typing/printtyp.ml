@@ -550,9 +550,14 @@ and raw_effect_context_option ppf eff =
   | None -> fprintf ppf "-"
   | Some eff -> raw_effect_context ppf eff
 
+and raw_effect_type ppf tyo =
+  match tyo with
+  | None -> fprintf ppf "."
+  | Some ty -> raw_type ppf ty
+
 and raw_effect_context ppf eff =
   pp_print_list ~pp_sep:(fun ppf () -> fprintf ppf ";@ ")
-    (fun ppf (s, ty) -> fprintf ppf "@[%s, %a@]" s raw_type ty)
+    (fun ppf (s, ty) -> fprintf ppf "@[%s, %a@]" s raw_effect_type ty)
     ppf eff.effects
 
 and raw_row_fixed ppf = function
@@ -941,7 +946,9 @@ let rec mark_loops_rec visited ty =
         mark_loops_rec visited ty;
         Option.iter
           (fun eff ->
-            List.iter (fun (_, ty) -> mark_loops_rec visited ty) eff.effects)
+            List.iter (fun (_, tyo) ->
+                Option.iter (mark_loops_rec visited) tyo)
+              eff.effects)
           eff
     | Tunivar _ -> add_named_var ty
 
@@ -950,7 +957,7 @@ let mark_loops ty =
   mark_loops_rec [] ty;;
 
 let mark_effect_context eff =
-  List.iter (fun (_, ty) -> mark_loops ty) eff.effects
+  List.iter (fun (_, tyo) -> Option.iter mark_loops tyo) eff.effects
 
 let reset_loop_marks () =
   visited_objects := []; aliased := []; delayed := []
@@ -1107,11 +1114,13 @@ and tree_of_type_and_effect_context_option sch ty eff =
   match eff with
   | None -> ty
   | Some eff ->
-      let eff = List.map (fun (s, ty) -> (s, tree_of_typexp sch ty)) eff.effects in
+      let eff = tree_of_effect_context sch eff in
       Otyp_effect_context(ty, eff)
 
 and tree_of_effect_context sch eff =
-  List.map (fun (s, ty) -> (s, tree_of_typexp sch ty)) eff.effects
+  List.map
+    (fun (s, tyo) -> (s, Option.map (tree_of_typexp sch) tyo))
+    eff.effects
 
 and tree_of_type_and_effect_context sch ty eff =
   let ty = tree_of_typexp sch ty in
@@ -1563,7 +1572,10 @@ let rec prepare_class_type params = function
           let ty, _, eff = method_type met in
           mark_loops ty;
           Option.iter
-            (fun eff -> List.iter (fun (_, ty) -> mark_loops ty) eff.effects)
+            (fun eff ->
+              List.iter
+                (fun (_, tyo) -> Option.iter mark_loops tyo)
+                eff.effects)
             eff)
         fields;
       Vars.iter (fun _ (_, _, ty) -> mark_loops ty) sign.csig_vars

@@ -44,6 +44,10 @@ val for_tupled_function:
         Ident.t list -> (pattern list * lambda) list -> partial ->
         lambda
 
+val for_adjustment:
+        scopes:scopes -> value_kind -> Location.t ->
+        effect_adjustment -> lambda -> lambda
+
 exception Cannot_flatten
 
 val flatten_pattern: int -> pattern -> pattern list

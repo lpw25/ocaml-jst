@@ -3592,7 +3592,7 @@ let for_trywith_exns ~scopes value_kind loc param pat_act_list =
 let for_trywith_effs ~scopes value_kind loc param eff_pat_acts =
   let sloc = Scoped_location.of_location ~scopes loc in
   let name_id = Ident.create_local "name" in
-  let name_def = Lprim (Pfield (0, Reads_agree), [param], sloc) in
+  let name_def = Lprim (Pfield (0, Reads_vary), [param], sloc) in
   let name_lam = Lvar name_id in
   let depth_id = Ident.create_local "depth" in
   let depth_def = Lprim (Pfield (1, Reads_vary), [param], sloc) in
@@ -3621,7 +3621,7 @@ let for_trywith_effs ~scopes value_kind loc param eff_pat_acts =
       eff_pat_acts []
   in
   let fail = Lprim (Praise Raise_notrace, [ param ], sloc) in
-  Llet (Alias, Pintval, name_id, name_def,
+  Llet (StrictOpt, Pintval, name_id, name_def,
    Llet (StrictOpt, Pintval, depth_id, depth_def,
       call_switcher value_kind sloc (Some fail) name_lam
         min_int max_int int_lambda_list))
@@ -3654,6 +3654,117 @@ let for_trywith ~scopes value_kind loc param exn_pat_acts eff_pat_acts =
   if_tag sloc param 1 value_kind
     (for_trywith_effs ~scopes value_kind loc param eff_pat_acts)
     (for_trywith_exns ~scopes value_kind loc param exn_pat_acts)
+
+let compile_adjustment_actions sloc actions count depth_lam param =
+  let action_count = List.length actions in
+  let shift = count - action_count in
+  let shift_depth =
+    Lprim(Psetfield(1, Immediate, Assignment alloc_heap),
+            [param;
+             Lprim(Paddint, [depth_lam;
+                             Lconst (Const_base (Const_int shift))],
+                   sloc)], sloc)
+  in
+  let int_lambda_list =
+    List.mapi
+      (fun idx (tag, depth) ->
+        let set_tag =
+          Lprim(Psetfield(0, Immediate, Assignment alloc_heap),
+               [param; Lconst (Const_base (Const_int tag))], sloc)
+        in
+        let set_depth =
+          Lprim(Psetfield(1, Immediate, Assignment alloc_heap),
+               [param; Lconst (Const_base (Const_int depth))], sloc)
+        in
+        idx, Lsequence(set_tag, set_depth))
+      actions
+  in
+  match int_lambda_list with
+  | [] -> shift_depth
+  | _ :: _ ->
+      call_switcher Pintval sloc (Some shift_depth) depth_lam
+        min_int max_int int_lambda_list      
+
+module Int_tbl = Hashtbl.Make(struct
+                   type t = int
+                   let equal = Int.equal
+                   let hash = Hashtbl.hash
+                   end)
+module Int_map = Map.Make(Int)
+
+let match_adjustment sloc outer inner param =
+  let name_id = Ident.create_local "name" in
+  let name_def = Lprim (Pfield (0, Reads_vary), [param], sloc) in
+  let name_lam = Lvar name_id in
+  let depth_id = Ident.create_local "depth" in
+  let depth_def = Lprim (Pfield (1, Reads_vary), [param], sloc) in
+  let depth_lam = Lvar depth_id in
+  let outer_counts = Int_tbl.create 3 in
+  let outer_mapping =
+    List.map
+      (fun item ->
+         let name = item.outer_label in
+         let tag = Btype.hash_variant name in
+         let prev =
+           match Int_tbl.find_opt outer_counts tag with
+           | None -> 0
+           | Some i -> i
+         in
+         Int_tbl.replace outer_counts tag (prev + 1);
+         tag, prev)
+      outer
+  in
+  let outer_mapping = Array.of_list outer_mapping in
+  let actions =
+    List.fold_left
+      (fun actions item ->
+        let name = item.inner_label in
+        let idx = item.inner_index in
+        let tag = Btype.hash_variant name in
+        let action = outer_mapping.(idx) in
+        Int_map.update tag
+          (function
+           | None ->
+               let count =
+                 match Int_tbl.find_opt outer_counts tag with
+                 | Some count ->
+                     Int_tbl.remove outer_counts tag;
+                     count
+                 | None ->
+                     0
+               in
+               Some ([action], count)
+           | Some (actions, count) -> Some (action :: actions, count))
+          actions)
+      Int_map.empty inner
+  in
+  let actions =
+    Int_tbl.fold
+      (fun tag count actions -> Int_map.add tag ([], count) actions)
+      outer_counts actions
+  in
+  let int_lambda_list =
+    Int_map.fold
+      (fun tag (rev_actions, count) int_lambda_list ->
+        let lambda =
+          compile_adjustment_actions
+            sloc (List.rev rev_actions) count depth_lam param
+        in
+        (tag, lambda) :: int_lambda_list)
+      actions []
+  in
+  Lsequence(
+   Llet (StrictOpt, Pintval, name_id, name_def,
+     Llet (StrictOpt, Pintval, depth_id, depth_def,
+       call_switcher Pintval sloc (Some lambda_unit) name_lam
+         min_int max_int int_lambda_list)),
+   Lprim (Praise Raise_notrace, [ param ], sloc))
+
+let for_adjustment ~scopes value_kind loc adj param =
+  let sloc = Scoped_location.of_location ~scopes loc in
+  if_tag sloc param 1 value_kind
+    (match_adjustment sloc adj.ea_outer adj.ea_inner param)
+    (Lprim (Praise Raise_reraise, [ param ], Scoped_location.Loc_unknown))
 
 let simple_for_let ~scopes value_kind loc param pat body =
   compile_matching ~scopes value_kind loc ~failer:Raise_match_failure

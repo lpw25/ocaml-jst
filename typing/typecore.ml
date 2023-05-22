@@ -151,6 +151,8 @@ type error =
   | Effect_type_clash_handler of Ctype.Unification_trace.t
   | Handler_name_clash of string * string
   | Operation_arity_mismatch of Longident.t * int * int
+  | Unmatched_effect_adjustment_binding
+  | Unused_effect_adjustment_binding
 
 exception Error of Location.t * Env.t * error
 exception Error_forward of Location.error
@@ -600,6 +602,13 @@ let subeffect_expr_effs loc env exp_eff eff =
 let subeffect env exp eff =
   subeffect_expr_effs exp.exp_loc env exp.exp_eff eff
 
+let adjust_effect env exp adj =
+  let eff = exp.exp_eff in
+  match Ctype.adjust_effect_context env eff.current adj with
+  | current -> { eff with current }
+  | exception Unify trace ->
+      raise (Error(exp.exp_loc, env, Effect_type_clash(trace, true)))
+
 let global_eff eff =
   { eff with delayed = Single empty_effect_context }
 
@@ -612,6 +621,54 @@ let poly_eff env exp eff =
 
 let match_eff eff =
   eff.delayed, global_eff eff
+
+let type_adjustment env outer inner =
+  let vars = String.Tbl.create 3 in
+  let vars_unused = String.Tbl.create 3 in
+  let _, outer, touter =
+    List.fold_left
+      (fun (idx, outer, touter) (name, var_opt) ->
+         let binding =
+           match var_opt with
+           | None -> None
+           | Some v ->
+               if String.Tbl.mem vars v.txt then
+                 raise (Error (v.loc, env, Multiply_bound_variable name));
+               String.Tbl.add vars v.txt idx;
+               String.Tbl.add vars_unused v.txt v.loc;
+               Some v
+         in
+         let idx = idx + 1 in
+         let outer = name :: outer in
+         let item = { outer_label = name; outer_binding = binding; } in
+         let touter = item :: touter in
+         (idx, outer, touter))
+      (0, [], []) outer
+  in
+  let inner, tinner =
+    List.fold_left
+      (fun (inner, tinner) (name, var) ->
+        let idx =
+          match String.Tbl.find vars var.txt with
+          | exception Not_found ->
+              raise (Error (var.loc, env, Unmatched_effect_adjustment_binding))
+          | idx -> idx
+        in
+        String.Tbl.remove vars_unused var.txt;
+        let inner = (name, idx) :: inner in
+        let item = {inner_label = name; inner_var = var; inner_index = idx} in
+        let tinner = item :: tinner in
+        inner, tinner
+        )
+      ([], []) inner
+  in
+  String.Tbl.iter
+    (fun _ loc -> raise (Error (loc, env, Unused_effect_adjustment_binding)))
+    vars_unused;
+  let adjustment = { inner; outer } in
+  { ea_inner = tinner;
+    ea_outer = touter;
+    ea_type = adjustment; }
 
 (* Specific version of type_option, using newty rather than newgenty *)
 
@@ -1727,7 +1784,8 @@ let check_scope_escape_pv_effect_context loc env level eff =
     | Simple (Unknown _) -> ()
     | Simple (Known eff) ->
         List.iter
-          (fun (_, ty) -> Ctype.check_scope_escape env level ty)
+          (fun (_, tyo) ->
+            Option.iter (Ctype.check_scope_escape env level) tyo)
           eff.effects
     | Join(_, _, _, eff1, eff2) ->
         loop eff1;
@@ -3290,6 +3348,7 @@ let rec is_nonexpansive exp =
   | Texp_perform(_, _, _, el) ->
       (* TODO: Is this really safe? *)
       List.for_all is_nonexpansive el
+  | Texp_effect_adjustment(_, e) -> is_nonexpansive e
   | Texp_array (_ :: _)
   | Texp_apply _
   | Texp_try _
@@ -3673,7 +3732,8 @@ let check_partial_application statement exp =
             | Texp_ifthenelse (_, e1, Some e2) ->
                 check e1; check e2
             | Texp_let (_, _, e) | Texp_sequence (_, e) | Texp_open (_, e)
-            | Texp_letexception (_, e) | Texp_letmodule (_, _, _, _, e) ->
+            | Texp_letexception (_, e) | Texp_letmodule (_, _, _, _, e)
+            | Texp_effect_adjustment(_, e) ->
                 check e
             | Texp_apply _ | Texp_send _ | Texp_new _ | Texp_letop _ ->
                 Location.prerr_warning exp_loc
@@ -4173,6 +4233,29 @@ env (expected_mode : expected_mode) sexp ty_expected_explained =
           exp_type = ty_res;
           exp_eff = eff;
           exp_mode = expected_mode.mode;
+          exp_attributes = sexp.pexp_attributes;
+          exp_env = env }
+
+  | Pexp_apply
+      ({ pexp_desc = Pexp_extension({txt = "extension.adjust"}, payload) },
+       [Nolabel, arg]) ->
+      let outer, inner =
+        match Builtin_attributes.effect_adjustment_of_payload payload with
+        | Ok (outer, inner) -> outer, inner
+        | Error `Disabled ->
+            raise (Typetexp.Error (loc, Env.empty, Effects_not_enabled))
+        | Error `Payload -> raise(Error(loc, env, Bad_effect_payload))
+      in
+      let adjustment = type_adjustment env outer inner in
+      let newenv = Env.add_lock Value_mode.global env in
+      let arg = type_expect newenv mode_global arg ty_expected_explained in
+      let eff = adjust_effect env arg adjustment.ea_type in
+      rue {
+          exp_desc = Texp_effect_adjustment(adjustment, arg);
+          exp_loc = loc; exp_extra = [];
+          exp_type = arg.exp_type;
+          exp_eff = eff;
+          exp_mode = arg.exp_mode;
           exp_attributes = sexp.pexp_attributes;
           exp_env = env }
   | Pexp_apply(sfunct, sargs) ->
@@ -7998,6 +8081,12 @@ let report_error ~loc env = function
        "@[The operation %a@ expects %i argument(s),@ \
         but is applied here to %i argument(s)@]"
        longident lid expected provided
+  | Unmatched_effect_adjustment_binding ->
+      Location.errorf ~loc
+        "@[This effect does not appear in the output effect context.@]"
+  | Unused_effect_adjustment_binding ->
+      Location.errorf ~loc
+        "@[This effect binding is unused: it should be replaced with \".\".@]"
 
 let report_error ~loc env err =
   Printtyp.wrap_printing_env ~error:true env

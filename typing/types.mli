@@ -148,7 +148,11 @@ and alloc_mode =
   | Amodevar of alloc_mode_var
 
 and effect_context =
-  { effects : (string * type_expr) list }
+  { effects : (string * type_expr option) list }
+
+and effect_adjustment =
+  { outer : string list;
+    inner : (string * int) list; }
 
 (** [  `X | `Y ]       (row_closed = true)
     [< `X | `Y ]       (row_closed = true)

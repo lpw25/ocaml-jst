@@ -259,15 +259,18 @@ let mkpat_operation pat =
 let perform_loc = mknoloc "extension.perform"
 
 let perform_extension name =
-  Exp.mk ~loc:Location.none
-    (Pexp_extension(perform_loc, PStr (name_payload name)))
+  Exp.extension ~loc:Location.none
+    (perform_loc, PStr (name_payload name))
 
 let mkexp_perform ~loc name exp =
   ghexp ~loc (Pexp_apply(perform_extension name, [Nolabel, exp]))
 
 let effects_loc = mknoloc "extension.effects"
 
-let effect_expr (name, typ) = Exp.extension (mknoloc name, PTyp typ)
+let effect_expr (name, typo) =
+  match typo with
+  | None -> Exp.extension (mknoloc name, PStr [])
+  | Some typ -> Exp.extension (mknoloc name, PTyp typ)
 
 let effects_attr effs =
   let payload =
@@ -293,6 +296,30 @@ let mkcds_effect_type cds =
   match cds with
   | [] -> assert false
   | cd :: rest -> mkcd_effect_type cd :: rest
+
+let adjust_loc = mknoloc "extension.adjust"
+let inner_loc = mknoloc "inner"
+let outer_loc = mknoloc "outer"
+
+let adjust_expr (name, pat) = Exp.extension (mknoloc name, PPat(pat, None))
+
+let adjust_list_expr kind_loc adjs =
+  let payload =
+    match adjs with
+    | [] -> PStr []
+    | [adj] -> PStr[Str.eval (adjust_expr adj)]
+    | adjs -> PStr[Str.eval (Exp.tuple (List.map adjust_expr adjs))]
+  in
+  Exp.extension ~loc:Location.none (kind_loc, payload)
+
+let adjust_extension ~outer ~inner =
+  let inner = adjust_list_expr inner_loc inner in
+  let outer = adjust_list_expr outer_loc outer in
+  let payload = PStr[Str.eval (Exp.tuple [outer; inner])] in
+  Exp.extension ~loc:Location.none (adjust_loc, payload)
+
+let mkexp_adjust ~loc ~outer ~inner exp =
+  ghexp ~loc (Pexp_apply(adjust_extension ~outer ~inner, [Nolabel, exp]))
 
 (* TODO define an abstraction boundary between locations-as-pairs
    and locations-as-Location.t; it should be clear when we move from
@@ -738,6 +765,7 @@ let mk_directive ~loc name arg =
 %token COLONGREATER
 %token COMMA
 %token CONSTRAINT
+%token DIV
 %token DO
 %token DONE
 %token DOT
@@ -902,7 +930,7 @@ The precedences must be listed from low to high.
 %nonassoc LBRACKETAT
 %right    COLONCOLON                    /* expr (e :: e :: e) */
 %left     INFIXOP2 PLUS PLUSDOT MINUS MINUSDOT PLUSEQ /* expr (e OP e OP e) */
-%left     PERCENT INFIXOP3 STAR                 /* expr (e OP e OP e) */
+%left     DIV PERCENT INFIXOP3 STAR     /* expr (e OP e OP e) */
 %right    INFIXOP4                      /* expr (e OP e OP e) */
 %nonassoc prec_unary_minus prec_unary_plus /* unary - */
 %nonassoc prec_constant_constructor     /* cf. simple_expr (C versus C x) */
@@ -2375,6 +2403,9 @@ expr:
   | PERFORM LIDENT mkrhs(constr_longident) simple_expr
      { mkexp_perform ~loc:$sloc $2
          (mkexp ~loc:$sloc (Pexp_construct($3, Some $4))) }
+  | EFFECT LBRACKET outer = effect_bindings DIV inner = effect_vars RBRACKET
+      exp = simple_expr %prec below_HASH
+      { mkexp_adjust ~loc:$sloc ~outer ~inner exp }
 ;
 %inline expr_attrs:
   | LET MODULE ext_attributes mkrhs(module_name) module_binding_body IN seq_expr
@@ -3777,12 +3808,32 @@ meth_list:
 ;
 
 effect:
-  label COLON core_type
-    { ($1, $3) }
+  | label COLON core_type
+      { ($1, Some $3) }
+  | label COLON DOT
+      { ($1, None) }
 ;
 
 %inline effects:
   separated_list(SEMI, effect)
+    { $1 }
+;
+effect_var:
+  label COLON mkrhs(LIDENT)
+    { ($1, Pat.var $3) }
+;
+effect_binding:
+  | label COLON mkrhs(LIDENT)
+      { ($1, Pat.var $3) }
+  | label COLON DOT
+      { ($1, Pat.any ()) }
+;
+%inline effect_vars:
+  separated_list(SEMI, effect_var)
+    { $1 }
+;
+%inline effect_bindings:
+  separated_list(SEMI, effect_binding)
     { $1 }
 ;
 /* Constants */
@@ -3844,6 +3895,7 @@ operator:
   | MINUSDOT      {"-."}
   | STAR           {"*"}
   | PERCENT        {"%"}
+  | DIV            {"/"}
   | EQUAL          {"="}
   | LESS           {"<"}
   | GREATER        {">"}

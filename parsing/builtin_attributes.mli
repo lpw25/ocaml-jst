@@ -104,7 +104,7 @@ val has_include_functor : Parsetree.attributes -> (bool,unit) result
 
 val get_effect_context :
   Parsetree.attributes
-  -> ((string * Parsetree.core_type) list option, unit) result
+  -> ((string * Parsetree.core_type option) list option, unit) result
 
 val has_effect : Parsetree.attributes -> bool
 val effect_name_of_payload :
@@ -113,3 +113,8 @@ val get_effect :
   Parsetree.attributes -> (string option, [`Disabled | `Payload]) result
 val has_effect_type : Parsetree.attributes -> (bool,unit) result
 val has_operation : Parsetree.attributes -> (bool,unit) result
+
+val effect_adjustment_of_payload :
+  Parsetree.payload
+  -> ((string * string Location.loc option) list
+      * (string * string Location.loc) list, [`Disabled | `Payload]) result

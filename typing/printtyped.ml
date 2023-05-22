@@ -328,6 +328,18 @@ and comprehension i ppf comp_types=
     Option.iter (expression i ppf) guard
   ) comp_types
 
+and effect_adjustment_inner_item i ppf inner =
+  line i ppf "\"%s\": %d\n" inner.inner_label inner.inner_index
+
+and effect_adjustment_outer_item i ppf outer =
+  line i ppf "\"%s\"\n" outer.outer_label
+
+and effect_adjustment i ppf {ea_outer;ea_inner} =
+  line i ppf "outer:\n";
+  list (i+1) effect_adjustment_outer_item ppf ea_outer;
+  line i ppf "inner:\n";
+  list (i+1) effect_adjustment_inner_item ppf ea_inner
+
 and expression i ppf x =
   line i ppf "expression %a\n" fmt_location x.exp_loc;
   attributes i ppf x.exp_attributes;
@@ -489,6 +501,10 @@ and expression i ppf x =
   | Texp_perform(n, li, _, el) ->
       line i ppf "Texp_perform \"%s\" %a\n" n fmt_longident li;
       list i expression ppf el
+  | Texp_effect_adjustment(adj, e) ->
+      line i ppf "Texp_effect_adjustment\n";
+      effect_adjustment i ppf adj;
+      expression i ppf e
 
 and value_description i ppf x =
   line i ppf "value_description %a %a\n" fmt_ident x.val_id fmt_location

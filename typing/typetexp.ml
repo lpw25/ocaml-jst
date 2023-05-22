@@ -599,10 +599,13 @@ and transl_type_and_effect_context env policy mode styp =
     | Some eff ->
         let effects =
           List.map
-            (fun (s, styp) ->
-              let cty = transl_type env policy mode styp in
-              let ty = cty.ctyp_type in
-              (s, ty)) eff
+            (fun (s, stypo) ->
+              match stypo with
+              | None -> (s, None)
+              | Some styp ->
+                  let cty = transl_type env policy mode styp in
+                  let ty = cty.ctyp_type in
+                  (s, Some ty)) eff
         in
         Some {effects}
   in

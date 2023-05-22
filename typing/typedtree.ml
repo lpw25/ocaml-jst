@@ -178,6 +178,7 @@ and expression_desc =
   | Texp_probe_is_enabled of { name:string }
   | Texp_perform of
       string * Longident.t loc * operation_description * expression list
+  | Texp_effect_adjustment of effect_adjustment * expression
 
 and ident_kind = Id_value | Id_prim of Types.alloc_mode option
 
@@ -232,6 +233,20 @@ and apply_position =
   | Tail
   | Nontail
   | Default
+
+and effect_adjustment_outer_item =
+  { outer_label : string;
+    outer_binding : string loc option; }
+
+and effect_adjustment_inner_item =
+  { inner_label : string;
+    inner_var : string loc;
+    inner_index : int; }
+
+and effect_adjustment =
+  { ea_outer : effect_adjustment_outer_item list;
+    ea_inner : effect_adjustment_inner_item list;
+    ea_type : Types.effect_adjustment; }
 
 (* Value expressions for the class language *)
 

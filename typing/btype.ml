@@ -304,7 +304,12 @@ let iter_row f row =
   fold_row (fun () v -> f v) () row
 
 let fold_effect_context f init eff =
-  List.fold_left (fun init (_, ty) -> f init ty) init eff.effects
+  List.fold_left
+    (fun init (_, tyo) ->
+      match tyo with
+      | None -> init
+      | Some ty -> f init ty)
+    init eff.effects
 
 let fold_effect_context_option f init = function
   | None -> init
@@ -519,7 +524,14 @@ let rec norm_univar ty =
   | _                  -> assert false
 
 let copy_effect_context f eff =
-  let effects = List.map (fun (s, ty) -> s, f ty) eff.effects in
+  let effects =
+    List.map
+      (fun ((s, tyo) as eff) ->
+        match tyo with
+        | None -> eff
+        | Some ty -> s, Some (f ty))
+      eff.effects
+  in
   { effects }
 
 let copy_effect_context_option f = function
@@ -773,7 +785,7 @@ let no_effect =
 
 let single_effect name ty =
   { delayed = Single empty_effect_context;
-    current = singleton_effect_context name ty; }
+    current = singleton_effect_context name (Some ty); }
 
 let delayed_eff eff =
   { delayed = Single eff;

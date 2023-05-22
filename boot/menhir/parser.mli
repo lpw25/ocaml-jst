@@ -109,6 +109,7 @@ type token =
   | DONE
   | DOCSTRING of (Docstrings.docstring)
   | DO
+  | DIV
   | CONSTRAINT
   | COMMENT of (string * Location.t)
   | COMMA

@@ -446,8 +446,10 @@ and print_out_label ppf (name, mut_or_gbl, arg) =
     | Ogom_immutable -> ""
   in
   fprintf ppf "@[<2>%s%s :@ %a@];" flag name print_out_type arg
-and print_out_effect ppf (s, ty) =
-  fprintf ppf "%s:@ %a" s print_out_type ty 
+and print_out_effect ppf (s, tyo) =
+  match tyo with
+  | None -> fprintf ppf "%s: ." s
+  | Some ty -> fprintf ppf "%s:@ %a" s print_out_type ty 
 
 and print_out_effect_context ppf eff =
   fprintf ppf "[%a]"

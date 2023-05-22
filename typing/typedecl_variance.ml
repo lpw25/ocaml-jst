@@ -119,7 +119,10 @@ let compute_variance env visited vari ty =
     | Tpoly (ty, _, eff) ->
         compute_same ty;
         Option.iter
-          (fun eff -> List.iter (fun (_, ty) -> compute_same ty) eff.effects)
+          (fun eff ->
+            List.iter
+              (fun (_, tyo) -> Option.iter compute_same tyo)
+              eff.effects)
           eff
     | Tvar _ | Tnil | Tlink _ | Tunivar _ -> ()
     | Tpackage (_, _, tyl) ->

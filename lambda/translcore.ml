@@ -889,6 +889,14 @@ and transl_exp0 ~in_new_scope ~scopes e =
               :: args, loc)
       in
       Lprim(Praise Raise_notrace, [block], loc)
+  | Texp_effect_adjustment(adj, arg) ->
+      let arg = transl_exp ~scopes arg in
+      let exn_id = Ident.create_local "exn" in
+      let k = Typeopt.value_kind e.exp_env e.exp_type in
+      let adjust =
+        Matching.for_adjustment ~scopes k e.exp_loc adj (Lvar exn_id)
+      in
+      Ltrywith(arg, exn_id, adjust, k)
 
 and pure_module m =
   match m.mod_desc with
@@ -1583,6 +1591,7 @@ and transl_letop ~scopes loc env let_ ands param case partial warnings =
     ap_specialised = Default_specialise;
     ap_probe=None;
   }
+
 
 (* Wrapper for class/module compilation,
    that can only return global values *)
